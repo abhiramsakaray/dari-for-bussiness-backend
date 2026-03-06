@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChainPe Integration Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #ffffff;
+            color: #000000;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            border-bottom: 3px solid #000;
+            padding-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 40px;
+        }
+        
+        .demo-section {
+            background: #f5f5f5;
+            border: 2px solid #000;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #000;
+            background: #fff;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #000;
+            box-shadow: 0 0 0 3px rgba(0,0,0,0.1);
+        }
+        
+        button {
+            background: #000;
+            color: #fff;
+            border: none;
+            padding: 14px 28px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background: #333;
+        }
+        
+        button:active {
+            background: #000;
+        }
+        
+        .info-box {
+            background: #fff;
+            border: 2px solid #000;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .info-box h3 {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        
+        .info-box p {
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+        
+        .code-block {
+            background: #000;
+            color: #fff;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+            border: 2px solid #000;
+        }
+        
+        .response {
+            background: #fff;
+            border: 2px solid #000;
+            padding: 15px;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .response.show {
+            display: block;
+        }
+        
+        .success {
+            border-color: #000;
+            background: #f0f0f0;
+        }
+        
+        .error {
+            border-color: #000;
+            background: #fff;
+            color: #000;
+        }
+        
+        .platform-buttons {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .platform-btn {
+            background: #fff;
+            color: #000;
+            border: 2px solid #000;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
+        .platform-btn:hover {
+            background: #000;
+            color: #fff;
+        }
+        
+        .endpoint-list {
+            list-style: none;
+            margin-top: 15px;
+        }
+        
+        .endpoint-list li {
+            background: #fff;
+            border: 1px solid #000;
+            padding: 10px;
+            margin-bottom: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ChainPe Integration Demo</h1>
+        <p class="subtitle">Test e-commerce platform integrations</p>
+        
+        <!-- Configuration Section -->
+        <div class="demo-section">
+            <h2>Configuration</h2>
+            <div class="form-group">
+                <label for="apiKey">API Key</label>
+                <input type="text" id="apiKey" placeholder="Enter your ChainPe API key" value="">
+            </div>
+            <div class="form-group">
+                <label for="baseUrl">Base URL</label>
+                <input type="text" id="baseUrl" value="https://chainpe.onrender.com" placeholder="https://chainpe.onrender.com">
+            </div>
+        </div>
+        
+        <!-- Quick Test Section -->
+        <div class="demo-section">
+            <h2>Quick Test Payment</h2>
+            <div class="form-group">
+                <label for="amount">Amount (USD)</label>
+                <input type="number" id="amount" value="50.00" step="0.01" min="0.01">
+            </div>
+            <div class="form-group">
+                <label for="orderId">Order ID</label>
+                <input type="text" id="orderId" value="TEST-001" placeholder="ORDER-123">
+            </div>
+            <div class="form-group">
+                <label for="customerEmail">Customer Email (Optional)</label>
+                <input type="email" id="customerEmail" placeholder="customer@example.com">
+            </div>
+            <button onclick="createCheckout()">Create Checkout & Pay</button>
+            
+            <div id="response" class="response"></div>
+        </div>
+        
+        <!-- Platform Examples -->
+        <div class="demo-section">
+            <h2>Platform Integration Examples</h2>
+            <div class="platform-buttons">
+                <div class="platform-btn" onclick="showShopifyCode()">
+                    Shopify Integration
+                </div>
+                <div class="platform-btn" onclick="showWooCommerceCode()">
+                    WooCommerce Integration
+                </div>
+                <div class="platform-btn" onclick="showJavaScriptCode()">
+                    JavaScript Integration
+                </div>
+                <div class="platform-btn" onclick="showPythonCode()">
+                    Python Integration
+                </div>
+            </div>
+            
+            <div id="codeExample" class="info-box" style="display: none; margin-top: 20px;">
+                <h3 id="codeTitle"></h3>
+                <div id="codeContent"></div>
+            </div>
+        </div>
+        
+        <!-- API Endpoints -->
+        <div class="demo-section">
+            <h2>Available Endpoints</h2>
+            <ul class="endpoint-list">
+                <li><strong>POST</strong> /integrations/create-checkout</li>
+                <li><strong>GET</strong> /integrations/verify/{session_id}?api_key=...</li>
+                <li><strong>GET</strong> /integrations/payment-button?api_key=...</li>
+                <li><strong>GET</strong> /integrations/shopify-install</li>
+                <li><strong>GET</strong> /integrations/woocommerce-plugin</li>
+            </ul>
+        </div>
+        
+        <!-- Info -->
+        <div class="info-box">
+            <h3>How It Works</h3>
+            <p>1. Create a checkout session with one API call</p>
+            <p>2. Redirect customer to the checkout URL</p>
+            <p>3. Customer pays with USDC or XLM</p>
+            <p>4. Smart contract validates payment automatically</p>
+            <p>5. Webhook notification sent to your server</p>
+            <p>6. Customer redirected to success/cancel URL</p>
+        </div>
+    </div>
+    
+    <script>
+        async function createCheckout() {
+            const apiKey = document.getElementById('apiKey').value;
+            const baseUrl = document.getElementById('baseUrl').value;
+            const amount = document.getElementById('amount').value;
+            const orderId = document.getElementById('orderId').value;
+            const customerEmail = document.getElementById('customerEmail').value;
+            
+            if (!apiKey) {
+                showResponse('Please enter your API key', 'error');
+                return;
+            }
+            
+            const responseDiv = document.getElementById('response');
+            responseDiv.className = 'response show';
+            responseDiv.innerHTML = '<p>Creating checkout session...</p>';
+            
+            try {
+                const response = await fetch(`${baseUrl}/integrations/create-checkout`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        amount: amount,
+                        currency: 'USD',
+                        order_id: orderId,
+                        customer_email: customerEmail || null,
+                        success_url: window.location.href + '?payment=success',
+                        cancel_url: window.location.href + '?payment=cancel'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    responseDiv.className = 'response show success';
+                    responseDiv.innerHTML = `
+                        <h3>Checkout Created!</h3>
+                        <p><strong>Session ID:</strong> ${data.session_id}</p>
+                        <p><strong>Checkout URL:</strong> <a href="${data.checkout_url}" target="_blank">${data.checkout_url}</a></p>
+                        <button onclick="window.location.href='${data.checkout_url}'">Go to Checkout</button>
+                    `;
+                } else {
+                    showResponse(`Error: ${data.detail || 'Failed to create checkout'}`, 'error');
+                }
+            } catch (error) {
+                showResponse(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        function showResponse(message, type) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.className = `response show ${type}`;
+            responseDiv.innerHTML = `<p>${message}</p>`;
+        }
+        
+        function showShopifyCode() {
+            document.getElementById('codeTitle').textContent = 'Shopify Integration';
+            document.getElementById('codeContent').innerHTML = `
+                <p>Add this to your Shopify theme:</p>
+                <div class="code-block">
+&lt;button onclick="payWithChainPe()"&gt;Pay with Crypto&lt;/button&gt;
+
+&lt;script&gt;
+function payWithChainPe() {
+    fetch('https://chainpe.onrender.com/integrations/create-checkout', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            api_key: 'YOUR_API_KEY',
+            amount: '{{ checkout.total_price }}',
+            currency: '{{ checkout.currency }}',
+            order_id: '{{ order.name }}',
+            success_url: '{{ shop.url }}/thank-you',
+            cancel_url: '{{ shop.url }}/cart'
+        })
+    })
+    .then(res => res.json())
+    .then(data => window.location.href = data.checkout_url);
+}
+&lt;/script&gt;
+                </div>
+                <p><a href="/integrations/shopify-install" target="_blank">View full setup guide →</a></p>
+            `;
+            document.getElementById('codeExample').style.display = 'block';
+        }
+        
+        function showWooCommerceCode() {
+            document.getElementById('codeTitle').textContent = 'WooCommerce Integration';
+            document.getElementById('codeContent').innerHTML = `
+                <p>Add this to your WooCommerce payment gateway:</p>
+                <div class="code-block">
+$response = wp_remote_post('https://chainpe.onrender.com/integrations/create-checkout', array(
+    'body' => json_encode(array(
+        'api_key' => $this->api_key,
+        'amount' => $order->get_total(),
+        'currency' => get_woocommerce_currency(),
+        'order_id' => $order->get_id(),
+        'success_url' => $this->get_return_url($order),
+        'cancel_url' => wc_get_checkout_url()
+    )),
+    'headers' => array('Content-Type' => 'application/json')
+));
+
+$data = json_decode(wp_remote_retrieve_body($response));
+wp_redirect($data->checkout_url);
+                </div>
+                <p><a href="/integrations/woocommerce-plugin" target="_blank">View full setup guide →</a></p>
+            `;
+            document.getElementById('codeExample').style.display = 'block';
+        }
+        
+        function showJavaScriptCode() {
+            document.getElementById('codeTitle').textContent = 'JavaScript Integration';
+            document.getElementById('codeContent').innerHTML = `
+                <p>Use this for any website:</p>
+                <div class="code-block">
+async function createCheckout(amount, orderId) {
+    const response = await fetch('https://chainpe.onrender.com/integrations/create-checkout', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            api_key: 'YOUR_API_KEY',
+            amount: amount,
+            currency: 'USD',
+            order_id: orderId,
+            success_url: window.location.origin + '/success',
+            cancel_url: window.location.origin + '/cancel'
+        })
+    });
+    
+    const data = await response.json();
+    window.location.href = data.checkout_url;
+}
+
+// Usage
+document.getElementById('payButton').onclick = () => {
+    createCheckout('50.00', 'ORDER-123');
+};
+                </div>
+            `;
+            document.getElementById('codeExample').style.display = 'block';
+        }
+        
+        function showPythonCode() {
+            document.getElementById('codeTitle').textContent = 'Python Integration';
+            document.getElementById('codeContent').innerHTML = `
+                <p>Server-side integration with Python:</p>
+                <div class="code-block">
+import requests
+
+def create_checkout(amount, order_id):
+    response = requests.post('https://chainpe.onrender.com/integrations/create-checkout', json={
+        'api_key': 'YOUR_API_KEY',
+        'amount': amount,
+        'currency': 'USD',
+        'order_id': order_id,
+        'success_url': 'https://yoursite.com/success',
+        'cancel_url': 'https://yoursite.com/cancel',
+        'webhook_url': 'https://yoursite.com/webhook'
+    })
+    
+    data = response.json()
+    return data['checkout_url']
+
+# Usage
+checkout_url = create_checkout('50.00', 'ORDER-123')
+# Redirect user to checkout_url
+                </div>
+            `;
+            document.getElementById('codeExample').style.display = 'block';
+        }
+        
+        // Check for payment status in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('payment') === 'success') {
+            showResponse('Payment completed successfully!', 'success');
+        } else if (urlParams.get('payment') === 'cancel') {
+            showResponse('Payment was cancelled', 'error');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dari - Secure Payment</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: #ffffff;
+            border-radius: 16px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #ffffff;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+
+        .header .merchant-name {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 24px;
+        }
+
+        .amount-section {
+            text-align: center;
+            margin-bottom: 24px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 12px;
+        }
+
+        .amount-label {
+            color: #6c757d;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .amount {
+            font-size: 42px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .currency {
+            font-size: 18px;
+            color: #6c757d;
+        }
+
+        /* Payment Method Selection */
+        .method-section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .payment-methods {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .payment-method {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #fff;
+        }
+
+        .payment-method:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .payment-method.selected {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+        }
+
+        .payment-method .icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            margin-right: 14px;
+        }
+
+        .payment-method.selected .icon {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .payment-method .details {
+            flex: 1;
+        }
+
+        .payment-method .token-name {
+            font-weight: 600;
+            color: #1a1a2e;
+            font-size: 15px;
+        }
+
+        .payment-method .chain-name {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 2px;
+        }
+
+        .payment-method .amount-token {
+            font-weight: 600;
+            color: #1a1a2e;
+            text-align: right;
+        }
+
+        /* Chain Icons */
+        .chain-icon {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #e9ecef;
+            color: #495057;
+            margin-left: 6px;
+        }
+
+        .chain-icon.stellar { background: #f0f7ff; color: #0070ff; }
+        .chain-icon.polygon { background: #f3e8ff; color: #8247e5; }
+        .chain-icon.ethereum { background: #edf2ff; color: #627eea; }
+        .chain-icon.tron { background: #fee; color: #eb0029; }
+        .chain-icon.base { background: #e8f4ff; color: #0052ff; }
+
+        /* Payment Details Section */
+        .payment-details {
+            display: none;
+            margin-top: 24px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+
+        .payment-details.active {
+            display: block;
+        }
+
+        .qr-section {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .qr-code {
+            background: white;
+            padding: 16px;
+            border-radius: 12px;
+            display: inline-block;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .qr-code img {
+            width: 180px;
+            height: 180px;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+        }
+
+        .detail-value {
+            font-family: 'SF Mono', 'Consolas', monospace;
+            font-size: 13px;
+            color: #1a1a2e;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .copy-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .copy-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Status */
+        .status {
+            text-align: center;
+            padding: 16px;
+            border-radius: 12px;
+            margin: 20px 0;
+            font-weight: 600;
+        }
+
+        .status.pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.expired {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .timer {
+            text-align: center;
+            font-size: 18px;
+            font-weight: 600;
+            color: #6c757d;
+            margin: 16px 0;
+        }
+
+        .timer.warning { color: #e67e22; }
+        .timer.danger { color: #e74c3c; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .confirm-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: opacity 0.2s;
+        }
+
+        .confirm-btn:hover {
+            opacity: 0.9;
+        }
+
+        .confirm-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .cancel-btn {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            color: #6c757d;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+
+        .cancel-btn:hover {
+            border-color: #adb5bd;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 16px;
+            background: #f8f9fa;
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e9ecef;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Success Animation */
+        .success-check {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px auto;
+            font-size: 40px;
+            color: white;
+        }
+
+        @media (max-width: 480px) {
+            body { padding: 0; }
+            .container { border-radius: 0; min-height: 100vh; }
+            .amount { font-size: 36px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💳 Dari</h1>
+            <div class="merchant-name">Paying {{ merchant_name }}</div>
+        </div>
+
+        <div class="content">
+            <!-- Amount Display -->
+            <div class="amount-section">
+                <div class="amount-label">Amount Due</div>
+                <div class="amount">
+                    <span class="currency">{{ fiat_currency }}</span>
+                    {{ amount_fiat }}
+                </div>
+            </div>
+
+            {% if status == 'created' %}
+            <!-- Payment Method Selection -->
+            <div class="method-section" id="method-section">
+                <div class="section-title">Choose Payment Method</div>
+                <div class="payment-methods" id="payment-methods">
+                    <!-- Payment options will be loaded dynamically -->
+                    <div class="spinner"></div>
+                </div>
+            </div>
+
+            <!-- Payment Details (shown after selection) -->
+            <div class="payment-details" id="payment-details">
+                <div class="section-title">Send Payment</div>
+                
+                <div class="qr-section">
+                    <div class="qr-code">
+                        <img id="qr-image" src="" alt="Payment QR Code">
+                    </div>
+                </div>
+
+                <div class="detail-row">
+                    <span class="detail-label">Send To</span>
+                    <span class="detail-value" id="payment-address">-</span>
+                    <button class="copy-btn" onclick="copyToClipboard('payment-address')">Copy</button>
+                </div>
+
+                <div class="detail-row">
+                    <span class="detail-label">Amount</span>
+                    <span class="detail-value" id="payment-amount">-</span>
+                    <button class="copy-btn" onclick="copyToClipboard('payment-amount')">Copy</button>
+                </div>
+
+                <div class="detail-row" id="memo-row" style="display: none;">
+                    <span class="detail-label">Memo</span>
+                    <span class="detail-value" id="payment-memo">-</span>
+                    <button class="copy-btn" onclick="copyToClipboard('payment-memo')">Copy</button>
+                </div>
+
+                <div class="status pending" id="waiting-status">
+                    ⏳ Waiting for payment...
+                </div>
+
+                <div class="timer" id="timer">15:00</div>
+            </div>
+
+            <button class="cancel-btn" onclick="cancelPayment()">Cancel Payment</button>
+
+            {% elif status == 'paid' %}
+            <!-- Success State -->
+            <div class="success-check">✓</div>
+            <div class="status success">
+                ✅ Payment Successful!
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Transaction</span>
+                <span class="detail-value">{{ tx_hash[:20] }}...</span>
+            </div>
+            {% if chain %}
+            <div class="detail-row">
+                <span class="detail-label">Network</span>
+                <span class="detail-value">{{ chain | capitalize }}</span>
+            </div>
+            {% endif %}
+            <button class="confirm-btn" onclick="window.location.href='{{ success_url }}'">
+                Continue →
+            </button>
+
+            {% elif status == 'expired' %}
+            <!-- Expired State -->
+            <div class="status expired">
+                ⏰ Payment session expired
+            </div>
+            <button class="cancel-btn" onclick="window.location.href='{{ cancel_url }}'">
+                Return to Store
+            </button>
+            {% endif %}
+        </div>
+
+        <div class="footer">
+            Powered by <a href="#">Dari for Business</a>
+            <br>
+            <small>Multi-chain stablecoin payments</small>
+        </div>
+    </div>
+
+    <script>
+        const sessionId = '{{ session_id }}';
+        const apiBaseUrl = '{{ api_base_url }}';
+        const successUrl = '{{ success_url }}';
+        const cancelUrl = '{{ cancel_url }}';
+        const expiresAt = new Date('{{ expires_at }}');
+        
+        let selectedMethod = null;
+        let pollInterval = null;
+
+        // Load payment options on page load
+        async function loadPaymentOptions() {
+            try {
+                const response = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/options`);
+                const options = await response.json();
+                
+                renderPaymentOptions(options);
+            } catch (error) {
+                console.error('Error loading payment options:', error);
+                document.getElementById('payment-methods').innerHTML = 
+                    '<div style="color: #e74c3c; text-align: center;">Error loading payment options</div>';
+            }
+        }
+
+        function renderPaymentOptions(options) {
+            const container = document.getElementById('payment-methods');
+            
+            if (options.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #6c757d;">No payment methods available</div>';
+                return;
+            }
+
+            container.innerHTML = options.map((opt, index) => `
+                <div class="payment-method" data-index="${index}" onclick="selectMethod(${index}, ${JSON.stringify(opt).replace(/"/g, '&quot;')})">
+                    <div class="icon">${getTokenIcon(opt.token)}</div>
+                    <div class="details">
+                        <div class="token-name">
+                            ${opt.token}
+                            <span class="chain-icon ${opt.chain}">${opt.chain_display}</span>
+                        </div>
+                        <div class="chain-name">via ${opt.chain_display}</div>
+                    </div>
+                    <div class="amount-token">${opt.amount} ${opt.token}</div>
+                </div>
+            `).join('');
+        }
+
+        function getTokenIcon(token) {
+            const icons = {
+                'USDC': '💵',
+                'USDT': '💲',
+                'PYUSD': '🅿️'
+            };
+            return icons[token] || '💰';
+        }
+
+        async function selectMethod(index, option) {
+            // Update UI
+            document.querySelectorAll('.payment-method').forEach(el => el.classList.remove('selected'));
+            document.querySelector(`[data-index="${index}"]`).classList.add('selected');
+            
+            selectedMethod = option;
+
+            // Call API to select method
+            try {
+                const response = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/select`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: option.token,
+                        chain: option.chain
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to select payment method');
+                }
+
+                const session = await response.json();
+                
+                // Show payment details
+                showPaymentDetails(option);
+
+                // Start polling for payment
+                startPolling();
+
+            } catch (error) {
+                console.error('Error selecting method:', error);
+                alert('Error selecting payment method. Please try again.');
+            }
+        }
+
+        function showPaymentDetails(option) {
+            document.getElementById('payment-details').classList.add('active');
+            document.getElementById('payment-address').textContent = option.wallet_address;
+            document.getElementById('payment-amount').textContent = `${option.amount} ${option.token}`;
+            
+            // Show memo for Stellar
+            if (option.memo) {
+                document.getElementById('memo-row').style.display = 'flex';
+                document.getElementById('payment-memo').textContent = option.memo;
+            }
+
+            // Generate QR code
+            const qrData = option.chain === 'stellar' 
+                ? `stellar:${option.wallet_address}?amount=${option.amount}&memo=${option.memo}`
+                : option.wallet_address;
+            
+            document.getElementById('qr-image').src = 
+                `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrData)}`;
+        }
+
+        function startPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/status`);
+                    const status = await response.json();
+
+                    if (status.status === 'paid') {
+                        clearInterval(pollInterval);
+                        window.location.href = successUrl + '?session_id=' + sessionId;
+                    } else if (status.status === 'expired') {
+                        clearInterval(pollInterval);
+                        window.location.reload();
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 3000);
+        }
+
+        function updateTimer() {
+            const now = new Date();
+            const diff = expiresAt - now;
+
+            if (diff <= 0) {
+                document.getElementById('timer').textContent = 'Expired';
+                document.getElementById('timer').classList.add('danger');
+                if (pollInterval) clearInterval(pollInterval);
+                return;
+            }
+
+            const minutes = Math.floor(diff / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            
+            const timerEl = document.getElementById('timer');
+            if (timerEl) {
+                timerEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                if (diff < 60000) {
+                    timerEl.classList.add('danger');
+                } else if (diff < 180000) {
+                    timerEl.classList.add('warning');
+                }
+            }
+        }
+
+        function copyToClipboard(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 1500);
+            });
+        }
+
+        function cancelPayment() {
+            if (confirm('Are you sure you want to cancel this payment?')) {
+                window.location.href = cancelUrl;
+            }
+        }
+
+        // Initialize
+        {% if status == 'created' %}
+        loadPaymentOptions();
+        setInterval(updateTimer, 1000);
+        updateTimer();
+        {% endif %}
+    </script>
+</body>
+</html>

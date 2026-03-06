@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChainPe Button Demo</title>
+    <script src="https://chainpe.onrender.com/chainpe-button.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f7fa;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #7f8c8d;
+            margin-bottom: 30px;
+        }
+        
+        .product {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        
+        .product-image {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+        }
+        
+        .product-details {
+            flex: 1;
+        }
+        
+        .product-name {
+            font-size: 20px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .product-description {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .product-price {
+            font-size: 24px;
+            font-weight: 700;
+            color: #667eea;
+        }
+        
+        .payment-methods {
+            margin-bottom: 30px;
+        }
+        
+        .payment-methods h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        .traditional-button {
+            background: #95a5a6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background 0.2s;
+        }
+        
+        .traditional-button:hover {
+            background: #7f8c8d;
+        }
+        
+        .info-box {
+            background: #e8f4f8;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 30px;
+        }
+        
+        .info-box h4 {
+            color: #2c3e50;
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        
+        .info-box ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #555;
+        }
+        
+        .info-box li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛍️ Demo Store</h1>
+        <p class="subtitle">ChainPe Payment Integration Example</p>
+        
+        <div class="product">
+            <div class="product-image">🎮</div>
+            <div class="product-details">
+                <div class="product-name">Premium Gaming Headset</div>
+                <div class="product-description">Wireless, noise-canceling, 40-hour battery life</div>
+                <div class="product-price">$50.00 USDC</div>
+            </div>
+        </div>
+        
+        <div class="payment-methods">
+            <h3>Choose Payment Method:</h3>
+            
+            <!-- ChainPe Button (will be styled by SDK) -->
+            <button id="chainpe-payment-button"></button>
+            
+            <!-- Traditional payment options -->
+            <button class="traditional-button" onclick="alert('Card payment not configured')">
+                💳 Pay with Card
+            </button>
+        </div>
+        
+        <div class="info-box">
+            <h4>💡 About ChainPe Payments</h4>
+            <ul>
+                <li>✅ Pay with USDC or XLM (Stellar network)</li>
+                <li>✅ Scan QR code with Freighter, Lobstr, or Solar wallet</li>
+                <li>✅ Instant confirmation on blockchain</li>
+                <li>✅ Low fees (< $0.01 per transaction)</li>
+                <li>✅ No chargebacks or fraud risk</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        // Initialize ChainPe button
+        ChainPe.init({
+            apiKey: 'pk_test_demo123456789',  // Replace with your actual API key
+            amount: 50.00,
+            orderId: 'DEMO-' + Date.now(),
+            successUrl: window.location.origin + '/demo-success.html',
+            cancelUrl: window.location.href,
+            metadata: {
+                customerEmail: 'demo@example.com',
+                customerName: 'Demo User',
+                product: 'Premium Gaming Headset',
+                productId: 'HEADSET-001'
+            }
+        });
+        
+        console.log('ChainPe button initialized! 🎉');
+    </script>
+</body>
+</html>
