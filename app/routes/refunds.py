@@ -2,11 +2,12 @@
 Refunds API Routes
 Process refunds for completed payments
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, status
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import secrets
 import uuid
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List
@@ -22,6 +23,7 @@ from app.schemas.schemas import (
 )
 
 router = APIRouter(prefix="/refunds", tags=["Refunds"])
+logger = logging.getLogger(__name__)
 
 
 def generate_refund_id() -> str:
@@ -146,26 +148,43 @@ async def list_refunds(
     
     Supports filtering by status and payment session.
     """
-    # Filter by merchant_id for security
-    query = db.query(Refund).filter(Refund.merchant_id == uuid.UUID(current_user["id"]))
-    
-    if status:
-        query = query.filter(Refund.status == status.value)
-    
-    if payment_session_id:
-        query = query.filter(Refund.payment_session_id == payment_session_id)
-    
-    total = query.count()
-    
-    refunds = query.order_by(Refund.created_at.desc())\
-        .offset((page - 1) * page_size)\
-        .limit(page_size)\
-        .all()
-    
-    return RefundList(
-        refunds=[build_refund_response(r) for r in refunds],
-        total=total
-    )
+    try:
+        merchant_uuid = uuid.UUID(current_user["id"])
+        logger.info(f"Fetching refunds for merchant {merchant_uuid}, page={page}, page_size={page_size}, status={status}")
+        
+        # Filter by merchant_id for security
+        query = db.query(Refund).filter(Refund.merchant_id == merchant_uuid)
+        
+        if status:
+            query = query.filter(Refund.status == status.value)
+        
+        if payment_session_id:
+            query = query.filter(Refund.payment_session_id == payment_session_id)
+        
+        total = query.count()
+        
+        refunds = query.order_by(Refund.created_at.desc())\
+            .offset((page - 1) * page_size)\
+            .limit(page_size)\
+            .all()
+        
+        refund_list = [build_refund_response(r) for r in refunds]
+        
+        logger.info(f"Found {len(refund_list)} refunds (total: {total}) for merchant {merchant_uuid}")
+        
+        return RefundList(
+            refunds=refund_list,
+            total=total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching refunds: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch refunds: {str(e)}"
+        )
 
 
 @router.get("/{refund_id}", response_model=RefundResponse)

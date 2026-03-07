@@ -10,7 +10,7 @@ from typing import List
 import logging
 
 from app.core import get_db, get_current_user
-from app.models import Merchant, MerchantSubscription, SubscriptionTier, SubscriptionStatus
+from app.models import Merchant, MerchantSubscription, SubscriptionTier, MerchantSubscriptionStatus
 from app.schemas import (
     SubscriptionPlanInfo,
     SubscriptionResponse,
@@ -116,23 +116,36 @@ SUBSCRIPTION_PLANS = {
 @router.get("/plans", response_model=List[SubscriptionPlanInfo])
 async def get_subscription_plans():
     """Get all available subscription plans with pricing and features."""
-    plans = []
-    for tier, plan_info in SUBSCRIPTION_PLANS.items():
-        plans.append(
-            SubscriptionPlanInfo(
-                tier=tier,
-                name=plan_info["name"],
-                monthly_price=plan_info["monthly_price"],
-                transaction_fee_min=plan_info["transaction_fee_min"],
-                transaction_fee_max=plan_info["transaction_fee_max"],
-                monthly_volume_limit=plan_info["monthly_volume_limit"],
-                payment_link_limit=plan_info["payment_link_limit"],
-                invoice_limit=plan_info["invoice_limit"],
-                team_member_limit=plan_info["team_member_limit"] or 999,
-                features=plan_info["features"],
-            )
+    try:
+        logger.info("Fetching subscription plans")
+        plans = []
+        for tier, plan_info in SUBSCRIPTION_PLANS.items():
+            try:
+                plan = SubscriptionPlanInfo(
+                    tier=tier,
+                    name=plan_info["name"],
+                    monthly_price=plan_info["monthly_price"],
+                    transaction_fee_min=plan_info["transaction_fee_min"],
+                    transaction_fee_max=plan_info["transaction_fee_max"],
+                    monthly_volume_limit=plan_info["monthly_volume_limit"],
+                    payment_link_limit=plan_info["payment_link_limit"],
+                    invoice_limit=plan_info["invoice_limit"],
+                    team_member_limit=plan_info["team_member_limit"] or 999,
+                    features=plan_info["features"],
+                )
+                plans.append(plan)
+            except Exception as e:
+                logger.error(f"Error creating plan info for {tier}: {e}")
+                continue
+        
+        logger.info(f"Successfully fetched {len(plans)} subscription plans")
+        return plans
+    except Exception as e:
+        logger.error(f"Error fetching subscription plans: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch subscription plans: {str(e)}"
         )
-    return plans
 
 
 # ============= GET CURRENT SUBSCRIPTION =============
@@ -347,7 +360,7 @@ async def cancel_subscription(
         )
 
     # Mark as cancelled (will downgrade to free at period end)
-    subscription.status = SubscriptionStatus.CANCELLED
+    subscription.status = MerchantSubscriptionStatus.CANCELLED
     subscription.cancelled_at = datetime.utcnow()
 
     db.commit()
@@ -385,14 +398,14 @@ async def reactivate_subscription(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
-    if subscription.status != SubscriptionStatus.CANCELLED:
+    if subscription.status != MerchantSubscriptionStatus.CANCELLED:
         raise HTTPException(
             status_code=400,
             detail="Subscription is not cancelled",
         )
 
     # Reactivate
-    subscription.status = SubscriptionStatus.ACTIVE
+    subscription.status = MerchantSubscriptionStatus.ACTIVE
     subscription.cancelled_at = None
 
     db.commit()

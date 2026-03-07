@@ -107,7 +107,7 @@ class SubscriptionTier(str, enum.Enum):
     ENTERPRISE = "enterprise"
 
 
-class SubscriptionStatus(str, enum.Enum):
+class MerchantSubscriptionStatus(str, enum.Enum):
     """Merchant subscription status"""
     ACTIVE = "active"
     PAST_DUE = "past_due"

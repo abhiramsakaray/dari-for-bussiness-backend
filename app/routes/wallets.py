@@ -37,21 +37,36 @@ async def list_wallets(
     
     Returns wallets for all configured blockchain networks.
     """
-    merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
-    wallets = db.query(MerchantWallet).filter(
-        MerchantWallet.merchant_id == merchant_uuid,
-        MerchantWallet.is_active == True
-    ).all()
-    
-    return MerchantWalletList(wallets=[
-        MerchantWalletResponse(
-            id=str(w.id),
-            chain=w.chain.value if hasattr(w.chain, 'value') else str(w.chain),
-            wallet_address=w.wallet_address,
-            is_active=w.is_active,
-            created_at=w.created_at
-        ) for w in wallets
-    ])
+    try:
+        merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
+        logger.info(f"Fetching wallets for merchant {merchant_uuid}")
+        
+        wallets = db.query(MerchantWallet).filter(
+            MerchantWallet.merchant_id == merchant_uuid,
+            MerchantWallet.is_active == True
+        ).all()
+        
+        wallet_list = [
+            MerchantWalletResponse(
+                id=str(w.id),
+                chain=w.chain.value if hasattr(w.chain, 'value') else str(w.chain),
+                wallet_address=w.wallet_address,
+                is_active=w.is_active,
+                created_at=w.created_at
+            ) for w in wallets
+        ]
+        
+        logger.info(f"Found {len(wallet_list)} wallets for merchant {merchant_uuid}")
+        
+        return MerchantWalletList(wallets=wallet_list)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching wallets: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch wallets: {str(e)}"
+        )
 
 
 @router.get("/dashboard", response_model=BalanceDashboardResponse)

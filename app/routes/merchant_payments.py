@@ -3,12 +3,14 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
 import uuid
+import logging
 from app.core import get_db, require_merchant
 from app.models import Merchant, PaymentSession, PaymentStatus
 from app.schemas import PaymentSessionStatus, PaymentListItem
 from decimal import Decimal
 
 router = APIRouter(prefix="/merchant/payments", tags=["Merchant Payments"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=List[PaymentListItem])
@@ -20,38 +22,53 @@ async def get_my_payment_sessions(
     offset: int = Query(0, description="Number of results to skip")
 ):
     """Get all payment sessions for the authenticated merchant."""
-    merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
-    query = db.query(PaymentSession).filter(PaymentSession.merchant_id == merchant_uuid)
-    
-    # Filter by status if provided
-    if status:
-        try:
-            status_enum = PaymentStatus(status.lower())
-            query = query.filter(PaymentSession.status == status_enum)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Must be one of: created, paid, expired"
+    try:
+        merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
+        logger.info(f"Fetching payment sessions for merchant {merchant_uuid}, status={status}, limit={limit}, offset={offset}")
+        
+        query = db.query(PaymentSession).filter(PaymentSession.merchant_id == merchant_uuid)
+        
+        # Filter by status if provided
+        if status:
+            try:
+                status_enum = PaymentStatus(status.lower())
+                query = query.filter(PaymentSession.status == status_enum)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status. Must be one of: created, paid, expired"
+                )
+        
+        # Order by created_at descending (newest first)
+        sessions = query.order_by(PaymentSession.created_at.desc()).offset(offset).limit(limit).all()
+        
+        payment_list = [
+            PaymentListItem(
+                id=session.id,
+                merchant_id=str(session.merchant_id),
+                merchant_name=session.merchant.name if session.merchant else "Unknown",
+                amount_fiat=session.amount_fiat,
+                fiat_currency=session.fiat_currency,
+                amount_usdc=session.amount_usdc,
+                status=session.status.value,
+                tx_hash=session.tx_hash,
+                created_at=session.created_at,
+                paid_at=session.paid_at
             )
-    
-    # Order by created_at descending (newest first)
-    sessions = query.order_by(PaymentSession.created_at.desc()).offset(offset).limit(limit).all()
-    
-    return [
-        PaymentListItem(
-            id=session.id,
-            merchant_id=str(session.merchant_id),
-            merchant_name=session.merchant.name,
-            amount_fiat=session.amount_fiat,
-            fiat_currency=session.fiat_currency,
-            amount_usdc=session.amount_usdc,
-            status=session.status.value,
-            tx_hash=session.tx_hash,
-            created_at=session.created_at,
-            paid_at=session.paid_at
+            for session in sessions
+        ]
+        
+        logger.info(f"Found {len(payment_list)} payment sessions for merchant {merchant_uuid}")
+        return payment_list
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching payment sessions: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch payment sessions: {str(e)}"
         )
-        for session in sessions
-    ]
 
 
 @router.get("/stats")

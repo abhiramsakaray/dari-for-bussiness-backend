@@ -106,15 +106,24 @@ async def list_plans(
     db: Session = Depends(get_db)
 ):
     """List all subscription plans for the merchant."""
-    # TEMP: Show all data (no auth)
-    query = db.query(SubscriptionPlan)
-    
-    if is_active is not None:
-        query = query.filter(SubscriptionPlan.is_active == is_active)
-    
-    plans = query.order_by(SubscriptionPlan.created_at.desc()).all()
-    
-    return [build_plan_response(plan, db) for plan in plans]
+    try:
+        # TEMP: Show all data (no auth)
+        query = db.query(SubscriptionPlan)
+        
+        if is_active is not None:
+            query = query.filter(SubscriptionPlan.is_active == is_active)
+        
+        plans = query.order_by(SubscriptionPlan.created_at.desc()).all()
+        
+        return [build_plan_response(plan, db) for plan in plans]
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error listing subscription plans: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list subscription plans: {str(e)}"
+        )
 
 
 @router.get("/plans/{plan_id}", response_model=SubscriptionPlanResponse)
@@ -523,34 +532,56 @@ async def list_subscription_payments(
 
 def build_plan_response(plan: SubscriptionPlan, db: Session) -> SubscriptionPlanResponse:
     """Build SubscriptionPlanResponse from model"""
-    # Count active subscribers
-    subscriber_count = db.query(func.count(Subscription.id)).filter(
-        and_(
-            Subscription.plan_id == plan.id,
-            Subscription.status.in_([
-                DBSubscriptionStatus.ACTIVE,
-                DBSubscriptionStatus.TRIALING,
-                DBSubscriptionStatus.PAUSED
-            ])
+    try:
+        # Count active subscribers
+        subscriber_count = db.query(func.count(Subscription.id)).filter(
+            and_(
+                Subscription.plan_id == plan.id,
+                Subscription.status.in_([
+                    DBSubscriptionStatus.ACTIVE,
+                    DBSubscriptionStatus.TRIALING,
+                    DBSubscriptionStatus.PAUSED
+                ])
+            )
+        ).scalar()
+        
+        return SubscriptionPlanResponse(
+            id=plan.id,
+            name=plan.name,
+            description=plan.description,
+            amount=plan.amount,
+            fiat_currency=plan.fiat_currency,
+            interval=plan.interval.value if hasattr(plan.interval, 'value') else plan.interval,
+            interval_count=plan.interval_count,
+            trial_days=plan.trial_days,
+            accepted_tokens=plan.accepted_tokens or [],
+            accepted_chains=plan.accepted_chains or [],
+            is_active=plan.is_active,
+            features=plan.features,
+            subscriber_count=subscriber_count or 0,
+            created_at=plan.created_at
         )
-    ).scalar()
-    
-    return SubscriptionPlanResponse(
-        id=plan.id,
-        name=plan.name,
-        description=plan.description,
-        amount=plan.amount,
-        fiat_currency=plan.fiat_currency,
-        interval=plan.interval.value if hasattr(plan.interval, 'value') else plan.interval,
-        interval_count=plan.interval_count,
-        trial_days=plan.trial_days,
-        accepted_tokens=plan.accepted_tokens or [],
-        accepted_chains=plan.accepted_chains or [],
-        is_active=plan.is_active,
-        features=plan.features,
-        subscriber_count=subscriber_count or 0,
-        created_at=plan.created_at
-    )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error building plan response for plan {plan.id}: {e}", exc_info=True)
+        # Return with default values if there's an error counting subscribers
+        return SubscriptionPlanResponse(
+            id=plan.id,
+            name=plan.name,
+            description=plan.description,
+            amount=plan.amount,
+            fiat_currency=plan.fiat_currency,
+            interval=plan.interval.value if hasattr(plan.interval, 'value') else plan.interval,
+            interval_count=plan.interval_count,
+            trial_days=plan.trial_days,
+            accepted_tokens=plan.accepted_tokens or [],
+            accepted_chains=plan.accepted_chains or [],
+            is_active=plan.is_active,
+            features=plan.features,
+            subscriber_count=0,
+            created_at=plan.created_at
+        )
 
 
 def build_subscription_response(subscription: Subscription, request: Request) -> RecurringSubscriptionResponse:
