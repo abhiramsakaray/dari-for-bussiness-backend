@@ -354,10 +354,33 @@ async def complete_onboarding(
     ).count()
 
     if wallet_count == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one wallet is required. Provide wallet setup data or create wallets first.",
-        )
+        # Auto-generate default wallets instead of failing
+        logger.info(f"Merchant {merchant.id} has no wallets — auto-generating defaults for: {DEFAULT_CHAINS}")
+        if not merchant.accepted_chains:
+            merchant.accepted_chains = DEFAULT_CHAINS
+        if not merchant.accepted_tokens:
+            merchant.accepted_tokens = DEFAULT_TOKENS
+
+        for chain in merchant.accepted_chains:
+            existing = db.query(MerchantWallet).filter(
+                MerchantWallet.merchant_id == merchant.id,
+                MerchantWallet.chain == BlockchainNetwork(chain),
+            ).first()
+            if not existing:
+                placeholder_address = _generate_placeholder_address(chain)
+                wallet = MerchantWallet(
+                    merchant_id=merchant.id,
+                    chain=BlockchainNetwork(chain),
+                    wallet_address=placeholder_address,
+                    is_active=True,
+                )
+                db.add(wallet)
+        db.flush()
+        wallet_count = db.query(MerchantWallet).filter(
+            MerchantWallet.merchant_id == merchant.id,
+            MerchantWallet.is_active == True,
+        ).count()
+        logger.info(f"Auto-generated {wallet_count} wallets for merchant {merchant.id}")
 
     # Generate API key if not already present
     if not merchant.api_key:
@@ -396,7 +419,7 @@ async def complete_onboarding(
     )
 
 
-# ============= SKIP ONBOARDING (Quick Setup) =============
+# ============= SKIP ONBOARDING (Disabled) =============
 
 @router.post("/skip")
 async def skip_onboarding(
@@ -404,44 +427,12 @@ async def skip_onboarding(
     db: Session = Depends(get_db),
 ):
     """
-    Skip the onboarding flow and go directly to dashboard.
-    Sets defaults for everything. Merchant can configure later.
+    Skip onboarding is disabled. Merchants must complete onboarding.
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
-    if not merchant:
-        raise HTTPException(status_code=404, detail="Merchant not found")
-
-    # Set defaults
-    if not merchant.business_name:
-        merchant.business_name = merchant.name
-    if not merchant.merchant_category:
-        merchant.merchant_category = "individual"
-    if not merchant.accepted_chains:
-        merchant.accepted_chains = DEFAULT_CHAINS
-    if not merchant.accepted_tokens:
-        merchant.accepted_tokens = DEFAULT_TOKENS
-
-    # Generate API key if not present
-    if not merchant.api_key:
-        merchant.api_key = generate_api_key()
-
-    merchant.onboarding_completed = True
-    merchant.onboarding_step = 3
-    db.commit()
-    db.refresh(merchant)
-
-    # Generate JWT token (in case they need a fresh one)
-    access_token = create_access_token(
-        data={"sub": str(merchant.id), "role": "merchant"}
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Onboarding cannot be skipped. Please complete all onboarding steps to access your dashboard.",
     )
-
-    return {
-        "message": "Onboarding skipped. Defaults applied.",
-        "access_token": access_token,
-        "token_type": "bearer",
-        "api_key": merchant.api_key,
-        "onboarding_completed": True,
-    }
 
 
 # ============= HELPER FUNCTIONS =============

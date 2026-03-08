@@ -5,8 +5,14 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.core import get_db
 from app.core.config import settings
+from app.core.cache import cache, make_cache_key
 from app.models import PaymentSession, PaymentStatus, MerchantWallet
+from app.models.models import PayerInfo
 from app.schemas import PaymentSessionDetail
+from app.schemas.schemas import PayerDataCollect, PayerDataResponse, TokenizeCheckoutResponse
+from app.services.payment_tokenization import (
+    create_payment_token, resolve_payment_token, revoke_payment_token, sign_payload,
+)
 from stellar_sdk import Keypair
 import qrcode
 import io
@@ -304,6 +310,9 @@ async def checkout_page(
     img.save(buf, format="PNG")
     qr_code_b64 = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
 
+    # ── Check if payer already submitted data ──
+    payer_exists = db.query(PayerInfo).filter(PayerInfo.session_id == session_id).first() is not None
+
     # ── Render ──
     return templates.TemplateResponse("checkout.html", {
         "request": request,
@@ -331,6 +340,8 @@ async def checkout_page(
         "success_url": session.success_url or "/",
         "cancel_url": session.cancel_url or "/",
         "expires_at": expiry_time.isoformat() + "Z",
+        "collect_payer_data": bool(session.collect_payer_data),
+        "payer_data_submitted": payer_exists,
     })
 
 
@@ -362,3 +373,115 @@ async def get_checkout_details(
         created_at=session.created_at,
         paid_at=session.paid_at
     )
+
+
+# ============= PAYER DATA COLLECTION =============
+
+@router.post("/{session_id}/payer-data", response_model=PayerDataResponse)
+async def submit_payer_data(
+    session_id: str,
+    data: PayerDataCollect,
+    db: Session = Depends(get_db),
+):
+    """
+    Collect payer data before showing the payment screen.
+    Called by the checkout page after the customer fills in their details.
+    """
+    session = db.query(PaymentSession).filter(PaymentSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Payment session not found")
+    if session.status == PaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="Payment already completed")
+
+    # Upsert payer info
+    payer = db.query(PayerInfo).filter(PayerInfo.session_id == session_id).first()
+    if not payer:
+        payer = PayerInfo(session_id=session_id, merchant_id=session.merchant_id)
+        db.add(payer)
+
+    for field in [
+        "email", "name", "phone",
+        "billing_address_line1", "billing_address_line2",
+        "billing_city", "billing_state", "billing_postal_code", "billing_country",
+        "shipping_address_line1", "shipping_city", "shipping_state",
+        "shipping_postal_code", "shipping_country", "custom_fields",
+    ]:
+        val = getattr(data, field, None)
+        if val is not None:
+            setattr(payer, field, val)
+
+    # Also store contact on the session for quick access
+    if data.email:
+        session.payer_email = data.email
+    if data.name:
+        session.payer_name = data.name
+
+    db.commit()
+    db.refresh(payer)
+
+    return PayerDataResponse(
+        email=payer.email, name=payer.name, phone=payer.phone,
+        billing_address_line1=payer.billing_address_line1,
+        billing_city=payer.billing_city, billing_state=payer.billing_state,
+        billing_postal_code=payer.billing_postal_code,
+        billing_country=payer.billing_country,
+        custom_fields=payer.custom_fields,
+    )
+
+
+# ============= PAYMENT TOKENIZATION =============
+
+@router.post("/{session_id}/tokenize", response_model=TokenizeCheckoutResponse)
+async def tokenize_checkout(
+    session_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Tokenize a checkout session so the frontend only transmits an
+    opaque token instead of raw payment data.
+    """
+    session = db.query(PaymentSession).filter(PaymentSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Payment session not found")
+    if session.status == PaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="Payment already completed")
+
+    # Build the sensitive payload that gets tokenized
+    payload = {
+        "session_id": session.id,
+        "amount_fiat": str(session.amount_fiat),
+        "fiat_currency": session.fiat_currency,
+        "amount_token": session.amount_token or session.amount_usdc or "0",
+        "token": session.token or "USDC",
+        "chain": session.chain or "stellar",
+        "merchant_id": str(session.merchant_id),
+    }
+
+    token = create_payment_token(session.id, payload)
+    sig = sign_payload({"payment_token": token, "session_id": session.id})
+
+    # Store token reference on the session
+    session.payment_token = token
+    db.commit()
+
+    return TokenizeCheckoutResponse(
+        payment_token=token,
+        expires_in_seconds=settings.PAYMENT_EXPIRY_MINUTES * 60,
+        signature=sig,
+    )
+
+
+@router.get("/{session_id}/resolve-token")
+async def resolve_token(
+    session_id: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Resolve a payment token back to real checkout data.
+    Only used server-side or by trusted frontends.
+    """
+    data = resolve_payment_token(token)
+    if not data or data.get("session_id") != session_id:
+        raise HTTPException(status_code=404, detail="Invalid or expired payment token")
+    return data

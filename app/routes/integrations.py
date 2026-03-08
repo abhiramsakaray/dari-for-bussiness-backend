@@ -181,7 +181,7 @@ async def verify_payment_status(
         "paid_amount": str(session.paid_amount) if session.paid_amount else None,
         "paid_asset": session.paid_asset,
         "transaction_hash": session.transaction_hash,
-        "metadata": session.metadata,
+        "metadata": session.session_metadata,
         "created_at": session.created_at.isoformat(),
         "paid_at": session.paid_at.isoformat() if session.paid_at else None
     }

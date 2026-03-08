@@ -1,6 +1,7 @@
 """
 Merchant Analytics API Routes
-Analytics and reporting for merchants
+Analytics and reporting for merchants — includes MRR/ARR, payment tracking,
+subscription tracking, and cached query results.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -12,22 +13,31 @@ import uuid
 
 from app.core.database import get_db
 from app.core import require_merchant
+from app.core.cache import cache, make_cache_key
 from app.models.models import (
     Merchant, PaymentSession, Invoice, Subscription, SubscriptionPayment,
+    SubscriptionPlan, PaymentEvent,
     PaymentStatus, AnalyticsSnapshot, InvoiceStatus as DBInvoiceStatus,
-    SubscriptionStatus as DBSubscriptionStatus
+    SubscriptionStatus as DBSubscriptionStatus, SubscriptionInterval,
 )
 from app.schemas.schemas import (
     AnalyticsOverview, PaymentMetrics, VolumeByToken, VolumeByChain,
-    AnalyticsTimeSeries, RevenueTimeSeries, AnalyticsPeriod
+    AnalyticsTimeSeries, RevenueTimeSeries, AnalyticsPeriod,
+    MRRARRResponse, MRRTrendPoint, MRRTrendResponse,
+    PaymentTrackingResponse, SubscriptionTrackingResponse,
+    LocalCurrencyAmount,
 )
+from app.services.price_service import PriceService
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
+
+_price_svc = PriceService()
 
 
 @router.get("/overview", response_model=AnalyticsOverview)
 async def get_analytics_overview(
     period: AnalyticsPeriod = AnalyticsPeriod.MONTH,
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
@@ -40,8 +50,13 @@ async def get_analytics_overview(
     - Invoice and subscription metrics
     - Comparison to previous period
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
+    
+    # Check cache
+    ck = make_cache_key("overview", merchant_id, period.value)
+    cached = cache.get(ck, region="analytics")
+    if cached is not None:
+        return cached
     
     now = datetime.utcnow()
     
@@ -85,7 +100,7 @@ async def get_analytics_overview(
     # Get subscription metrics
     subscription_metrics = get_subscription_metrics(db, merchant_id, period_start, now)
     
-    return AnalyticsOverview(
+    result = AnalyticsOverview(
         period_start=period_start,
         period_end=now,
         period=period.value,
@@ -102,11 +117,14 @@ async def get_analytics_overview(
         payments_change_pct=payments_change,
         volume_change_pct=volume_change
     )
+    cache.set(ck, result, region="analytics")
+    return result
 
 
 @router.get("/revenue")
 async def get_revenue_timeseries(
     period: AnalyticsPeriod = AnalyticsPeriod.MONTH,
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
@@ -114,8 +132,7 @@ async def get_revenue_timeseries(
     
     Returns daily/weekly/monthly revenue data points for charting.
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
     
     now = datetime.utcnow()
     
@@ -162,6 +179,7 @@ async def get_revenue_timeseries(
 @router.get("/payments/summary")
 async def get_payment_summary(
     days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
@@ -169,8 +187,7 @@ async def get_payment_summary(
     
     Returns counts and amounts by status.
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -204,13 +221,13 @@ async def get_payment_summary(
 async def get_top_customers(
     limit: int = Query(default=10, ge=1, le=50),
     days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
     Get top customers by payment volume.
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -225,6 +242,7 @@ async def get_top_customers(
 @router.get("/conversion")
 async def get_conversion_metrics(
     days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
@@ -235,8 +253,7 @@ async def get_conversion_metrics(
     - Average time to payment
     - Drop-off rates by step
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -303,13 +320,13 @@ async def get_conversion_metrics(
 @router.get("/chains")
 async def get_chain_analytics(
     days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db)
 ):
     """
     Get analytics by blockchain network.
     """
-    # TEMP: Show all data (no auth)
-    merchant_id = None
+    merchant_id = current_user["id"]
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -640,3 +657,343 @@ def aggregate_revenue_by_interval(
         })
     
     return result
+
+
+# ========================
+# MRR / ARR ENDPOINTS
+# ========================
+
+def _interval_months(interval: str) -> int:
+    """Map SubscriptionInterval to months for MRR normalisation."""
+    return {
+        "daily": 1,    # daily treated as ~30 days = 1 month
+        "weekly": 1,
+        "monthly": 1,
+        "quarterly": 3,
+        "yearly": 12,
+    }.get(interval, 1)
+
+
+def _to_monthly(amount: Decimal, interval: str) -> Decimal:
+    """Normalise any billing amount to a monthly equivalent."""
+    mapping = {
+        "daily": Decimal("30"),
+        "weekly": Decimal(str(52 / 12)),
+        "monthly": Decimal("1"),
+        "quarterly": Decimal("1") / Decimal("3"),
+        "yearly": Decimal("1") / Decimal("12"),
+    }
+    factor = mapping.get(interval, Decimal("1"))
+    return (amount * factor).quantize(Decimal("0.01"))
+
+
+async def _local_amount(usd_amount: float, merchant: Merchant) -> Optional[LocalCurrencyAmount]:
+    """Helper to convert USD to merchant's local currency."""
+    currency = (merchant.country or "").upper()
+    # Map country to currency code (simplified)
+    country_currency = {
+        "IN": ("INR", "₹"), "US": ("USD", "$"), "GB": ("GBP", "£"),
+        "EU": ("EUR", "€"), "DE": ("EUR", "€"), "FR": ("EUR", "€"),
+        "JP": ("JPY", "¥"), "AU": ("AUD", "A$"), "CA": ("CAD", "C$"),
+        "SG": ("SGD", "S$"), "AE": ("AED", "د.إ"), "INDIA": ("INR", "₹"),
+    }
+    info = country_currency.get(currency)
+    if not info:
+        return None
+    code, symbol = info
+    if code == "USD":
+        return LocalCurrencyAmount(
+            amount_usdc=usd_amount, amount_local=usd_amount,
+            local_currency="USD", local_symbol="$",
+            exchange_rate=1.0, display_local=f"${usd_amount:,.2f}"
+        )
+    try:
+        rate = await _price_svc.get_fiat_rate("USD", code)
+        local = float(Decimal(str(usd_amount)) * rate)
+        return LocalCurrencyAmount(
+            amount_usdc=usd_amount, amount_local=round(local, 2),
+            local_currency=code, local_symbol=symbol,
+            exchange_rate=float(rate),
+            display_local=f"{symbol}{local:,.2f}"
+        )
+    except Exception:
+        return None
+
+
+@router.get("/mrr-arr", response_model=MRRARRResponse)
+async def get_mrr_arr(
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Calculate MRR and ARR for the merchant in USD and local currency.
+    MRR = sum of all active subscriptions normalised to monthly.
+    ARR = MRR * 12.
+    """
+    merchant_id = current_user["id"]
+
+    ck = make_cache_key("mrr_arr", merchant_id)
+    cached = cache.get(ck, region="analytics")
+    if cached is not None:
+        return cached
+
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+
+    # Fetch active subscriptions with their plans
+    active_subs = (
+        db.query(Subscription, SubscriptionPlan)
+        .join(SubscriptionPlan, Subscription.plan_id == SubscriptionPlan.id)
+        .filter(
+            Subscription.merchant_id == merchant_id,
+            Subscription.status.in_([
+                DBSubscriptionStatus.ACTIVE,
+                DBSubscriptionStatus.TRIALING,
+            ]),
+        )
+        .all()
+    )
+
+    mrr = Decimal("0")
+    for sub, plan in active_subs:
+        mrr += _to_monthly(plan.amount, plan.interval.value if hasattr(plan.interval, 'value') else plan.interval)
+
+    arr = (mrr * 12).quantize(Decimal("0.01"))
+
+    # Period comparison
+    now = datetime.utcnow()
+    period_start = now - timedelta(days=30)
+    prev_start = period_start - timedelta(days=30)
+
+    new_count = db.query(func.count(Subscription.id)).filter(
+        Subscription.merchant_id == merchant_id,
+        Subscription.created_at >= period_start,
+    ).scalar() or 0
+
+    churned_count = db.query(func.count(Subscription.id)).filter(
+        Subscription.merchant_id == merchant_id,
+        Subscription.status == DBSubscriptionStatus.CANCELLED,
+        Subscription.cancelled_at >= period_start,
+    ).scalar() or 0
+
+    # Previous MRR for change %
+    prev_paid = db.query(func.sum(SubscriptionPayment.amount)).filter(
+        SubscriptionPayment.status == PaymentStatus.PAID,
+        SubscriptionPayment.paid_at >= prev_start,
+        SubscriptionPayment.paid_at < period_start,
+    ).scalar() or Decimal("0")
+
+    change_pct = None
+    if prev_paid > 0:
+        change_pct = ((mrr - prev_paid) / prev_paid * 100).quantize(Decimal("0.01"))
+
+    mrr_local = await _local_amount(float(mrr), merchant) if merchant else None
+    arr_local = await _local_amount(float(arr), merchant) if merchant else None
+
+    result = MRRARRResponse(
+        mrr_usd=mrr,
+        arr_usd=arr,
+        mrr_local=mrr_local,
+        arr_local=arr_local,
+        active_subscriptions=len(active_subs),
+        new_this_period=new_count,
+        churned_this_period=churned_count,
+        net_revenue_change_pct=change_pct,
+    )
+    cache.set(ck, result, region="analytics")
+    return result
+
+
+@router.get("/mrr-trend", response_model=MRRTrendResponse)
+async def get_mrr_trend(
+    months: int = Query(default=6, ge=1, le=24),
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    MRR trend over past N months — provides monthly data points for charting.
+    """
+    merchant_id = current_user["id"]
+
+    ck = make_cache_key("mrr_trend", merchant_id, months)
+    cached = cache.get(ck, region="analytics")
+    if cached is not None:
+        return cached
+
+    now = datetime.utcnow()
+    points = []
+
+    for i in range(months - 1, -1, -1):
+        month_end = (now.replace(day=1) - timedelta(days=1) * 0) if i == 0 else (
+            now.replace(day=1) - timedelta(days=30 * i)
+        )
+        month_start = month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if i == 0:
+            month_end = now
+        else:
+            # last day of that month
+            next_month = month_start + timedelta(days=32)
+            month_end = next_month.replace(day=1) - timedelta(seconds=1)
+
+        # Sum subscription payments in that month
+        monthly_rev = db.query(func.sum(SubscriptionPayment.amount)).filter(
+            SubscriptionPayment.status == PaymentStatus.PAID,
+            SubscriptionPayment.paid_at >= month_start,
+            SubscriptionPayment.paid_at <= month_end,
+        ).scalar() or 0
+
+        sub_count = db.query(func.count(Subscription.id)).filter(
+            Subscription.merchant_id == merchant_id,
+            Subscription.created_at <= month_end,
+            Subscription.status.in_([DBSubscriptionStatus.ACTIVE, DBSubscriptionStatus.TRIALING]),
+        ).scalar() or 0
+
+        new_count = db.query(func.count(Subscription.id)).filter(
+            Subscription.merchant_id == merchant_id,
+            Subscription.created_at >= month_start,
+            Subscription.created_at <= month_end,
+        ).scalar() or 0
+
+        churned = db.query(func.count(Subscription.id)).filter(
+            Subscription.merchant_id == merchant_id,
+            Subscription.status == DBSubscriptionStatus.CANCELLED,
+            Subscription.cancelled_at >= month_start,
+            Subscription.cancelled_at <= month_end,
+        ).scalar() or 0
+
+        points.append(MRRTrendPoint(
+            date=month_start.strftime("%Y-%m"),
+            mrr_usd=float(monthly_rev),
+            subscription_count=sub_count,
+            new=new_count,
+            churned=churned,
+        ))
+
+    result = MRRTrendResponse(points=points, period_months=months)
+    cache.set(ck, result, region="analytics")
+    return result
+
+
+# ========================
+# PAYMENT TRACKING
+# ========================
+
+@router.get("/payments/{session_id}/track", response_model=PaymentTrackingResponse)
+async def track_payment(
+    session_id: str,
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Detailed payment tracking with event timeline.
+    """
+    merchant_id = current_user["id"]
+    session = db.query(PaymentSession).filter(
+        PaymentSession.id == session_id,
+        PaymentSession.merchant_id == merchant_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Payment session not found")
+
+    events = (
+        db.query(PaymentEvent)
+        .filter(PaymentEvent.session_id == session_id)
+        .order_by(PaymentEvent.created_at.asc())
+        .all()
+    )
+
+    return PaymentTrackingResponse(
+        session_id=session.id,
+        status=session.status.value if hasattr(session.status, 'value') else session.status,
+        amount_fiat=float(session.amount_fiat),
+        fiat_currency=session.fiat_currency,
+        token=session.token,
+        chain=session.chain,
+        tx_hash=session.tx_hash,
+        block_number=session.block_number,
+        confirmations=session.confirmations,
+        payer_email=session.payer_email,
+        payer_name=session.payer_name,
+        created_at=session.created_at,
+        paid_at=session.paid_at,
+        expires_at=session.expires_at,
+        events=[
+            {
+                "event_type": e.event_type,
+                "chain": e.chain,
+                "tx_hash": e.tx_hash,
+                "details": e.details,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in events
+        ],
+    )
+
+
+# ========================
+# SUBSCRIPTION TRACKING
+# ========================
+
+@router.get("/subscriptions/{subscription_id}/track", response_model=SubscriptionTrackingResponse)
+async def track_subscription(
+    subscription_id: str,
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Detailed subscription tracking with payment history.
+    """
+    merchant_id = current_user["id"]
+    sub = db.query(Subscription).filter(
+        Subscription.id == subscription_id,
+        Subscription.merchant_id == merchant_id,
+    ).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == sub.plan_id).first()
+
+    payments = (
+        db.query(SubscriptionPayment)
+        .filter(SubscriptionPayment.subscription_id == subscription_id)
+        .order_by(SubscriptionPayment.created_at.desc())
+        .all()
+    )
+
+    total_paid = sum(float(p.amount) for p in payments if p.status == PaymentStatus.PAID)
+
+    return SubscriptionTrackingResponse(
+        id=sub.id,
+        plan_name=plan.name if plan else "Unknown",
+        customer_email=sub.customer_email,
+        customer_name=sub.customer_name,
+        status=sub.status.value if hasattr(sub.status, 'value') else sub.status,
+        current_period_start=sub.current_period_start,
+        current_period_end=sub.current_period_end,
+        next_payment_at=sub.next_payment_at,
+        last_payment_at=sub.last_payment_at,
+        failed_payment_count=sub.failed_payment_count or 0,
+        total_paid_usd=total_paid,
+        payment_count=len(payments),
+        events=[
+            {
+                "period_start": p.period_start.isoformat(),
+                "period_end": p.period_end.isoformat(),
+                "amount": float(p.amount),
+                "status": p.status.value if hasattr(p.status, 'value') else p.status,
+                "paid_at": p.paid_at.isoformat() if p.paid_at else None,
+            }
+            for p in payments
+        ],
+    )
+
+
+# ========================
+# CACHE STATS (admin/debug)
+# ========================
+
+@router.get("/cache/stats")
+async def get_cache_stats(
+    current_user: dict = Depends(require_merchant),
+):
+    """Return cache hit/miss statistics."""
+    return cache.stats()

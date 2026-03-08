@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import List
 import uuid
 from app.core import get_db, require_merchant
+from app.core.cache import cache, make_cache_key
 from app.models import Merchant, MerchantWallet, BlockchainNetwork, Withdrawal
 from app.schemas import (
     MerchantWalletCreate, MerchantWalletResponse, MerchantWalletList,
@@ -41,6 +42,12 @@ async def list_wallets(
         merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
         logger.info(f"Fetching wallets for merchant {merchant_uuid}")
         
+        # Check cache
+        ck = make_cache_key("wallets", merchant_uuid)
+        cached = cache.get(ck, region="wallets")
+        if cached is not None:
+            return cached
+        
         wallets = db.query(MerchantWallet).filter(
             MerchantWallet.merchant_id == merchant_uuid,
             MerchantWallet.is_active == True
@@ -58,7 +65,9 @@ async def list_wallets(
         
         logger.info(f"Found {len(wallet_list)} wallets for merchant {merchant_uuid}")
         
-        return MerchantWalletList(wallets=wallet_list)
+        result = MerchantWalletList(wallets=wallet_list)
+        cache.set(ck, result, region="wallets")
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -208,6 +217,9 @@ async def add_wallet(
         if merchant:
             merchant.stellar_address = address
             db.commit()
+    
+    # Invalidate wallet cache
+    cache.invalidate_prefix(make_cache_key("wallets", merchant_id), region="wallets")
     
     return MerchantWalletResponse(
         id=str(wallet.id),

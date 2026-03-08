@@ -123,7 +123,8 @@ async def create_payment_session_public(
         accepted_tokens=accepted_tokens,
         accepted_chains=valid_chains,
         order_id=session_data.order_id,
-        metadata=session_data.metadata,
+        session_metadata=session_data.metadata,
+        collect_payer_data=session_data.collect_payer_data,
         status=PaymentStatus.CREATED,
         success_url=str(session_data.success_url) if session_data.success_url else "",
         cancel_url=str(session_data.cancel_url) if session_data.cancel_url else "",
@@ -204,7 +205,7 @@ async def get_payment_session_public(
         paid_at=session.paid_at,
         expires_at=session.expires_at,
         amount_usdc=session.amount_usdc,  # Backward compatibility
-        metadata=session.metadata
+        metadata=session.session_metadata
     )
 
 

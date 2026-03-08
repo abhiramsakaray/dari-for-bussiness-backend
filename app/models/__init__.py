@@ -16,6 +16,7 @@ from app.models.models import (
     Withdrawal,
     WithdrawalStatus,
     WithdrawalLimit,
+    PayerInfo,
 )
 
 __all__ = [

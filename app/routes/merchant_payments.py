@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import uuid
 import logging
 from app.core import get_db, require_merchant
+from app.core.cache import cache, make_cache_key
 from app.models import Merchant, PaymentSession, PaymentStatus
 from app.schemas import PaymentSessionStatus, PaymentListItem
 from decimal import Decimal
@@ -25,6 +26,12 @@ async def get_my_payment_sessions(
     try:
         merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
         logger.info(f"Fetching payment sessions for merchant {merchant_uuid}, status={status}, limit={limit}, offset={offset}")
+        
+        # Check cache (only for default unfiltered listing)
+        ck = make_cache_key("payments_list", merchant_uuid, status, limit, offset)
+        cached = cache.get(ck, region="payments")
+        if cached is not None:
+            return cached
         
         query = db.query(PaymentSession).filter(PaymentSession.merchant_id == merchant_uuid)
         
@@ -53,12 +60,16 @@ async def get_my_payment_sessions(
                 status=session.status.value,
                 tx_hash=session.tx_hash,
                 created_at=session.created_at,
-                paid_at=session.paid_at
+                paid_at=session.paid_at,
+                expires_at=session.expires_at,
+                payer_email=session.payer_email,
+                payer_name=session.payer_name,
             )
             for session in sessions
         ]
         
         logger.info(f"Found {len(payment_list)} payment sessions for merchant {merchant_uuid}")
+        cache.set(ck, payment_list, region="payments")
         return payment_list
         
     except HTTPException:
@@ -171,7 +182,54 @@ async def get_recent_payments(
             status=session.status.value,
             tx_hash=session.tx_hash,
             created_at=session.created_at,
-            paid_at=session.paid_at
+            paid_at=session.paid_at,
+            expires_at=session.expires_at,
+            payer_email=session.payer_email,
+            payer_name=session.payer_name,
+        )
+        for session in sessions
+    ]
+
+
+@router.get("/payer-leads", response_model=List[PaymentListItem])
+async def get_payer_leads(
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+    include_paid: bool = Query(False, description="Include already paid sessions"),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0),
+):
+    """
+    Returns sessions where the customer submitted their contact info
+    but payment is still pending or abandoned. Use this list to follow
+    up with customers who started a payment but didn't complete it.
+    """
+    merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
+
+    query = db.query(PaymentSession).filter(
+        PaymentSession.merchant_id == merchant_uuid,
+        PaymentSession.payer_email.isnot(None),
+    )
+    if not include_paid:
+        query = query.filter(PaymentSession.status != PaymentStatus.PAID)
+
+    sessions = query.order_by(PaymentSession.created_at.desc()).offset(offset).limit(limit).all()
+
+    return [
+        PaymentListItem(
+            id=session.id,
+            merchant_id=str(session.merchant_id),
+            merchant_name=session.merchant.name if session.merchant else "",
+            amount_fiat=session.amount_fiat,
+            fiat_currency=session.fiat_currency,
+            amount_usdc=session.amount_usdc,
+            status=session.status.value,
+            tx_hash=session.tx_hash,
+            created_at=session.created_at,
+            paid_at=session.paid_at,
+            expires_at=session.expires_at,
+            payer_email=session.payer_email,
+            payer_name=session.payer_name,
         )
         for session in sessions
     ]
@@ -198,10 +256,19 @@ async def get_payment_session_detail(
     return PaymentSessionStatus(
         session_id=session.id,
         status=session.status.value,
-        amount_usdc=session.amount_usdc,
+        amount=str(session.amount_fiat),
+        currency=session.fiat_currency,
+        token=session.token,
+        chain=session.chain,
         tx_hash=session.tx_hash,
+        block_number=session.block_number,
+        confirmations=session.confirmations,
+        order_id=session.order_id,
         created_at=session.created_at,
-        paid_at=session.paid_at
+        paid_at=session.paid_at,
+        expires_at=session.expires_at,
+        amount_usdc=session.amount_usdc,
+        metadata=session.session_metadata,
     )
 
 

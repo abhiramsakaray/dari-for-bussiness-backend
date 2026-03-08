@@ -47,6 +47,7 @@ class GoogleAuthResponse(BaseModel):
     api_key: str
     is_new_user: bool = False
     onboarding_completed: bool = False
+    onboarding_step: int = 0
 
 
 # ============= ONBOARDING SCHEMAS =============
@@ -236,6 +237,8 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     api_key: str  # Merchant's API key for creating payment sessions
+    onboarding_completed: bool = False
+    onboarding_step: int = 0
 
 
 # ============= MERCHANT WALLET SCHEMAS =============
@@ -314,6 +317,9 @@ class PaymentSessionCreate(BaseModel):
     cancel_url: Optional[str] = Field(None, description="URL to redirect to if payment is cancelled")
     metadata: Optional[dict] = Field(None, description="Optional metadata (customer info, items, etc.)")
     
+    # Payer data collection
+    collect_payer_data: bool = Field(default=True, description="Collect payer info before payment")
+
     # Backward compatibility
     amount_usdc: Optional[Decimal] = Field(None, description="[DEPRECATED] Use 'amount' instead")
 
@@ -470,10 +476,15 @@ class PaymentListItem(BaseModel):
     tx_hash: Optional[str] = None
     created_at: datetime
     paid_at: Optional[datetime] = None
-    
+    expires_at: Optional[datetime] = None
+
+    # Payer info (available as soon as the customer fills the form)
+    payer_email: Optional[str] = None
+    payer_name: Optional[str] = None
+
     # Backward compatibility
     amount_usdc: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -1339,4 +1350,122 @@ class BalanceDashboardResponse(BaseModel):
     # Net available (total - pending)
     net_available_usdc: float
     net_available_local: Optional[LocalCurrencyAmount] = None
+
+
+# ============= PAYER DATA COLLECTION SCHEMAS =============
+
+class PayerDataCollect(BaseModel):
+    """Payer data submitted on the checkout page before payment."""
+    email: Optional[EmailStr] = None
+    name: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=50)
+    billing_address_line1: Optional[str] = Field(None, max_length=255)
+    billing_address_line2: Optional[str] = Field(None, max_length=255)
+    billing_city: Optional[str] = Field(None, max_length=100)
+    billing_state: Optional[str] = Field(None, max_length=100)
+    billing_postal_code: Optional[str] = Field(None, max_length=20)
+    billing_country: Optional[str] = Field(None, max_length=100)
+    shipping_address_line1: Optional[str] = Field(None, max_length=255)
+    shipping_city: Optional[str] = Field(None, max_length=100)
+    shipping_state: Optional[str] = Field(None, max_length=100)
+    shipping_postal_code: Optional[str] = Field(None, max_length=20)
+    shipping_country: Optional[str] = Field(None, max_length=100)
+    custom_fields: Optional[dict] = None
+
+
+class PayerDataResponse(BaseModel):
+    """Stored payer data returned to merchant."""
+    email: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    billing_address_line1: Optional[str] = None
+    billing_city: Optional[str] = None
+    billing_state: Optional[str] = None
+    billing_postal_code: Optional[str] = None
+    billing_country: Optional[str] = None
+    custom_fields: Optional[dict] = None
+    class Config:
+        from_attributes = True
+
+
+# ============= PAYMENT TOKENIZATION SCHEMAS =============
+
+class TokenizeCheckoutRequest(BaseModel):
+    """Request to tokenize checkout session for secure transmission."""
+    session_id: str
+
+
+class TokenizeCheckoutResponse(BaseModel):
+    """Tokenized checkout reference."""
+    payment_token: str
+    expires_in_seconds: int
+    signature: str  # HMAC signature the frontend can verify
+
+
+# ============= MRR / ARR ANALYTICS SCHEMAS =============
+
+class MRRARRResponse(BaseModel):
+    """Monthly & Annual Recurring Revenue summary."""
+    mrr_usd: Decimal = Decimal("0")
+    arr_usd: Decimal = Decimal("0")
+    mrr_local: Optional[LocalCurrencyAmount] = None
+    arr_local: Optional[LocalCurrencyAmount] = None
+    active_subscriptions: int = 0
+    new_this_period: int = 0
+    churned_this_period: int = 0
+    net_revenue_change_pct: Optional[Decimal] = None
+    period: str = "month"
+
+
+class MRRTrendPoint(BaseModel):
+    """Single data point in MRR trend."""
+    date: str  # ISO date
+    mrr_usd: float
+    subscription_count: int
+    new: int = 0
+    churned: int = 0
+
+
+class MRRTrendResponse(BaseModel):
+    """MRR trend over time."""
+    points: List[MRRTrendPoint]
+    period_months: int
+
+
+# ============= PAYMENT TRACKING SCHEMAS =============
+
+class PaymentTrackingResponse(BaseModel):
+    """Extended payment tracking with timeline."""
+    session_id: str
+    status: str
+    amount_fiat: float
+    fiat_currency: str
+    token: Optional[str] = None
+    chain: Optional[str] = None
+    tx_hash: Optional[str] = None
+    block_number: Optional[int] = None
+    confirmations: Optional[int] = None
+    payer_email: Optional[str] = None
+    payer_name: Optional[str] = None
+    created_at: datetime
+    paid_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    events: List[dict] = []  # timeline of PaymentEvent records
+
+
+class SubscriptionTrackingResponse(BaseModel):
+    """Extended subscription tracking."""
+    id: str
+    plan_name: str
+    customer_email: str
+    customer_name: Optional[str] = None
+    status: str
+    current_period_start: datetime
+    current_period_end: datetime
+    next_payment_at: Optional[datetime] = None
+    last_payment_at: Optional[datetime] = None
+    failed_payment_count: int = 0
+    total_paid_usd: float = 0
+    payment_count: int = 0
+    events: List[dict] = []
 

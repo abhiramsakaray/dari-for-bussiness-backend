@@ -100,6 +100,29 @@
         .wal-icon img{width:24px;height:24px}
         .wal-abbr{font-size:12px;font-weight:700;color:#374151}
 
+        /* ── PAYER DATA FORM ── */
+        .payer-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;z-index:10;display:flex;flex-direction:column;border-radius:0 16px 16px 0}
+        .payer-header{padding:20px 24px;border-bottom:1px solid #e5e7eb}
+        .payer-header h2{font-size:18px;font-weight:700;color:#111827;margin-bottom:4px}
+        .payer-header p{font-size:13px;color:#6b7280}
+        .payer-form{flex:1;overflow-y:auto;padding:20px 24px}
+        .pf-group{margin-bottom:16px}
+        .pf-label{display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+        .pf-input{width:100%;padding:10px 14px;border:1.5px solid #d1d5db;border-radius:10px;font-size:14px;font-family:inherit;outline:none;transition:border .15s;box-sizing:border-box}
+        .pf-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+        .pf-input.error{border-color:#ef4444}
+        select.pf-input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px;cursor:pointer}
+        .pf-error{font-size:11px;color:#ef4444;margin-top:3px;display:none}
+        .pf-row{display:flex;gap:12px}
+        .pf-row .pf-group{flex:1}
+        .pf-section{font-size:13px;font-weight:700;color:#6b7280;margin:20px 0 10px;padding-top:16px;border-top:1px solid #f3f4f6;text-transform:uppercase;letter-spacing:.5px}
+        .pf-footer{padding:16px 24px;border-top:1px solid #e5e7eb}
+        .pf-btn{width:100%;padding:13px;border:none;border-radius:12px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .15s}
+        .pf-btn:hover{opacity:.9}
+        .pf-btn:disabled{opacity:.5;cursor:not-allowed}
+        .pf-skip{display:block;text-align:center;margin-top:10px;font-size:13px;color:#6b7280;cursor:pointer;text-decoration:underline}
+        .pf-skip:hover{color:#374151}
+
         /* Recommended */
         .rec-section{margin-top:16px}
         .rec-lbl{font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:10px}
@@ -154,7 +177,8 @@
 
         <div class="price-box">
             <div class="price-title">Price Summary</div>
-            <div class="price-fiat">{{ currency_symbol }}{{ amount_fiat }}</div>
+            <div class="price-fiat" id="priceFiat">{{ currency_symbol }}{{ amount_fiat }}</div>
+            <div id="priceLocalSub" style="display:none;font-size:12px;color:#9ca3af;margin-top:2px;font-family:'Inter',sans-serif"></div>
             <div class="price-crypto">
                 &#8776; <span class="tag">{{ amount_token }} {{ token }}</span> on {{ chain_name }}
             </div>
@@ -174,7 +198,120 @@
     </div>
 
     <!-- ══ RIGHT ══ -->
-    <div class="right">
+    <div class="right" style="position:relative">
+        {% if collect_payer_data and not payer_data_submitted %}
+        <!-- ── PAYER DATA COLLECTION OVERLAY ── -->
+        <div class="payer-overlay" id="payerOverlay">
+            <div class="payer-header">
+                <h2>Your Details</h2>
+                <p>Please enter your information to proceed to payment</p>
+            </div>
+            <div class="payer-form">
+                <div class="pf-group">
+                    <label class="pf-label">Email *</label>
+                    <input type="email" class="pf-input" id="payerEmail" placeholder="you@example.com" required>
+                    <div class="pf-error" id="emailError">Please enter a valid email</div>
+                </div>
+                <div class="pf-group">
+                    <label class="pf-label">Full Name *</label>
+                    <input type="text" class="pf-input" id="payerName" placeholder="John Doe" required>
+                    <div class="pf-error" id="nameError">Please enter your name</div>
+                </div>
+                <div class="pf-group">
+                    <label class="pf-label">Phone</label>
+                    <input type="tel" class="pf-input" id="payerPhone" placeholder="+1 234 567 8900">
+                </div>
+
+                <div class="pf-section">Billing Address</div>
+                <div class="pf-group">
+                    <label class="pf-label">Address Line 1</label>
+                    <input type="text" class="pf-input" id="billingLine1" placeholder="123 Main Street">
+                </div>
+                <div class="pf-row">
+                    <div class="pf-group">
+                        <label class="pf-label">City</label>
+                        <input type="text" class="pf-input" id="billingCity" placeholder="City">
+                    </div>
+                    <div class="pf-group">
+                        <label class="pf-label">State</label>
+                        <input type="text" class="pf-input" id="billingState" placeholder="State">
+                    </div>
+                </div>
+                <div class="pf-row">
+                    <div class="pf-group">
+                        <label class="pf-label">Postal Code</label>
+                        <input type="text" class="pf-input" id="billingPostal" placeholder="10001">
+                    </div>
+                    <div class="pf-group">
+                        <label class="pf-label">Country</label>
+                        <select class="pf-input" id="billingCountry" onchange="onCountryChange(this.value)">
+                            <option value="">Select country...</option>
+                            <option value="US">United States (USD)</option>
+                            <option value="IN">India (INR)</option>
+                            <option value="PK">Pakistan (PKR)</option>
+                            <option value="BD">Bangladesh (BDT)</option>
+                            <option value="LK">Sri Lanka (LKR)</option>
+                            <option value="NP">Nepal (NPR)</option>
+                            <option value="GB">United Kingdom (GBP)</option>
+                            <option value="DE">Germany (EUR)</option>
+                            <option value="FR">France (EUR)</option>
+                            <option value="IT">Italy (EUR)</option>
+                            <option value="ES">Spain (EUR)</option>
+                            <option value="NL">Netherlands (EUR)</option>
+                            <option value="CH">Switzerland (CHF)</option>
+                            <option value="SE">Sweden (SEK)</option>
+                            <option value="NO">Norway (NOK)</option>
+                            <option value="DK">Denmark (DKK)</option>
+                            <option value="PL">Poland (PLN)</option>
+                            <option value="AE">UAE (AED)</option>
+                            <option value="SA">Saudi Arabia (SAR)</option>
+                            <option value="QA">Qatar (QAR)</option>
+                            <option value="KW">Kuwait (KWD)</option>
+                            <option value="BH">Bahrain (BHD)</option>
+                            <option value="OM">Oman (OMR)</option>
+                            <option value="EG">Egypt (EGP)</option>
+                            <option value="NG">Nigeria (NGN)</option>
+                            <option value="KE">Kenya (KES)</option>
+                            <option value="ZA">South Africa (ZAR)</option>
+                            <option value="GH">Ghana (GHS)</option>
+                            <option value="ET">Ethiopia (ETB)</option>
+                            <option value="TZ">Tanzania (TZS)</option>
+                            <option value="UG">Uganda (UGX)</option>
+                            <option value="CN">China (CNY)</option>
+                            <option value="JP">Japan (JPY)</option>
+                            <option value="KR">South Korea (KRW)</option>
+                            <option value="SG">Singapore (SGD)</option>
+                            <option value="MY">Malaysia (MYR)</option>
+                            <option value="ID">Indonesia (IDR)</option>
+                            <option value="TH">Thailand (THB)</option>
+                            <option value="PH">Philippines (PHP)</option>
+                            <option value="VN">Vietnam (VND)</option>
+                            <option value="MM">Myanmar (MMK)</option>
+                            <option value="HK">Hong Kong (HKD)</option>
+                            <option value="TW">Taiwan (TWD)</option>
+                            <option value="AU">Australia (AUD)</option>
+                            <option value="NZ">New Zealand (NZD)</option>
+                            <option value="CA">Canada (CAD)</option>
+                            <option value="MX">Mexico (MXN)</option>
+                            <option value="BR">Brazil (BRL)</option>
+                            <option value="AR">Argentina (ARS)</option>
+                            <option value="CO">Colombia (COP)</option>
+                            <option value="CL">Chile (CLP)</option>
+                            <option value="PE">Peru (PEN)</option>
+                            <option value="TR">Turkey (TRY)</option>
+                            <option value="RU">Russia (RUB)</option>
+                            <option value="UA">Ukraine (UAH)</option>
+                            <option value="IL">Israel (ILS)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="pf-footer">
+                <button class="pf-btn" id="payerSubmitBtn" onclick="submitPayerData()">Continue to Payment</button>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="r-header">
             <h2>Payment Options</h2>
             <div class="r-header-btns">
@@ -287,7 +424,186 @@
 
 <script>
 const SESSION='{{ session_id }}',CANCEL='{{ cancel_url }}',SUCCESS='{{ success_url }}',EXPIRES=new Date('{{ expires_at }}');
+const BASE_AMOUNT_USD={{ amount_fiat }};
 let poll;
+
+/* ── Country → Currency map ── */
+const CC={
+    US:{c:'USD',s:'$'},AU:{c:'AUD',s:'A$'},CA:{c:'CAD',s:'C$'},NZ:{c:'NZD',s:'NZ$'},
+    GB:{c:'GBP',s:'£'},CH:{c:'CHF',s:'Fr'},SE:{c:'SEK',s:'kr'},NO:{c:'NOK',s:'kr'},
+    DK:{c:'DKK',s:'kr'},PL:{c:'PLN',s:'zł'},
+    DE:{c:'EUR',s:'€'},FR:{c:'EUR',s:'€'},IT:{c:'EUR',s:'€'},ES:{c:'EUR',s:'€'},NL:{c:'EUR',s:'€'},
+    IN:{c:'INR',s:'₹'},PK:{c:'PKR',s:'₨'},BD:{c:'BDT',s:'৳'},LK:{c:'LKR',s:'Rs'},
+    NP:{c:'NPR',s:'Rs'},MM:{c:'MMK',s:'K'},
+    AE:{c:'AED',s:'د.إ'},SA:{c:'SAR',s:'﷼'},QA:{c:'QAR',s:'﷼'},
+    KW:{c:'KWD',s:'د.ك'},BH:{c:'BHD',s:'BD'},OM:{c:'OMR',s:'ر.ع.'},
+    EG:{c:'EGP',s:'E£'},NG:{c:'NGN',s:'₦'},KE:{c:'KES',s:'KSh'},
+    ZA:{c:'ZAR',s:'R'},GH:{c:'GHS',s:'₵'},ET:{c:'ETB',s:'Br'},
+    TZ:{c:'TZS',s:'TSh'},UG:{c:'UGX',s:'USh'},
+    CN:{c:'CNY',s:'¥'},JP:{c:'JPY',s:'¥'},KR:{c:'KRW',s:'₩'},
+    SG:{c:'SGD',s:'S$'},MY:{c:'MYR',s:'RM'},ID:{c:'IDR',s:'Rp'},
+    TH:{c:'THB',s:'฿'},PH:{c:'PHP',s:'₱'},VN:{c:'VND',s:'₫'},
+    HK:{c:'HKD',s:'HK$'},TW:{c:'TWD',s:'NT$'},
+    MX:{c:'MXN',s:'$'},BR:{c:'BRL',s:'R$'},AR:{c:'ARS',s:'$'},
+    CO:{c:'COP',s:'$'},CL:{c:'CLP',s:'$'},PE:{c:'PEN',s:'S/'},
+    TR:{c:'TRY',s:'₺'},RU:{c:'RUB',s:'₽'},UA:{c:'UAH',s:'₴'},IL:{c:'ILS',s:'₪'},
+};
+
+let _rates=null,_ratesProm=null;
+function _fetchRates(){
+    if(_rates)return Promise.resolve(_rates);
+    if(_ratesProm)return _ratesProm;
+    _ratesProm=fetch('https://open.er-api.com/v6/latest/USD')
+        .then(r=>r.json()).then(d=>{_rates=d.rates;return d.rates;})
+        .catch(()=>null);
+    return _ratesProm;
+}
+_fetchRates(); // prefetch silently on load
+
+function onCountryChange(code){
+    const curr=CC[code];
+    const el=document.getElementById('priceFiat');
+    const sub=document.getElementById('priceLocalSub');
+    if(!curr||curr.c==='USD'){
+        if(el)el.textContent='$'+parseFloat(BASE_AMOUNT_USD).toFixed(2);
+        if(sub)sub.style.display='none';
+        return;
+    }
+    _fetchRates().then(rates=>{
+        if(!rates||!rates[curr.c])return;
+        const local=BASE_AMOUNT_USD*rates[curr.c];
+        const fmt=local>=100
+            ?local.toLocaleString(undefined,{maximumFractionDigits:0})
+            :local.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        if(el)el.textContent=curr.s+fmt+' '+curr.c;
+        if(sub){sub.textContent='= $'+parseFloat(BASE_AMOUNT_USD).toFixed(2)+' USD';sub.style.display='block';}
+    });
+}
+
+/* ── Payer Data Collection ── */
+const PAYER_STORAGE_KEY='chainpe_payer_data';
+
+function _getPayerFields(){
+    return {
+        email:   (document.getElementById('payerEmail')||{}).value||'',
+        name:    (document.getElementById('payerName')||{}).value||'',
+        phone:   (document.getElementById('payerPhone')||{}).value||'',
+        billing_address_line1:(document.getElementById('billingLine1')||{}).value||'',
+        billing_city:  (document.getElementById('billingCity')||{}).value||'',
+        billing_state: (document.getElementById('billingState')||{}).value||'',
+        billing_postal_code:(document.getElementById('billingPostal')||{}).value||'',
+        billing_country:(document.getElementById('billingCountry')||{}).value||'',
+    };
+}
+
+function _loadSavedPayerData(){
+    try{
+        const raw=localStorage.getItem(PAYER_STORAGE_KEY);
+        if(!raw)return null;
+        return JSON.parse(raw);
+    }catch(e){return null;}
+}
+
+function _savePayerData(d){
+    try{localStorage.setItem(PAYER_STORAGE_KEY,JSON.stringify(d));}catch(e){}
+}
+
+function _fillPayerForm(d){
+    if(!d)return;
+    const map={
+        email:'payerEmail', name:'payerName', phone:'payerPhone',
+        billing_address_line1:'billingLine1', billing_city:'billingCity',
+        billing_state:'billingState', billing_postal_code:'billingPostal',
+        billing_country:'billingCountry',
+    };
+    for(const[k,id] of Object.entries(map)){
+        const el=document.getElementById(id);
+        if(el&&d[k])el.value=d[k];
+    }
+    // Update price display for saved country
+    if(d.billing_country)onCountryChange(d.billing_country);
+}
+
+function _buildPayerBody(){
+    const f=_getPayerFields();
+    const body={};
+    if(f.email.trim())body.email=f.email.trim();
+    if(f.name.trim())body.name=f.name.trim();
+    if(f.phone.trim())body.phone=f.phone.trim();
+    if(f.billing_address_line1.trim())body.billing_address_line1=f.billing_address_line1.trim();
+    if(f.billing_city.trim())body.billing_city=f.billing_city.trim();
+    if(f.billing_state.trim())body.billing_state=f.billing_state.trim();
+    if(f.billing_postal_code.trim())body.billing_postal_code=f.billing_postal_code.trim();
+    if(f.billing_country.trim())body.billing_country=f.billing_country.trim();
+    return body;
+}
+
+function _sendPayerData(body,onSuccess,onError){
+    fetch('/checkout/'+SESSION+'/payer-data',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body)
+    }).then(r=>{
+        if(!r.ok)throw new Error('Failed');
+        return r.json();
+    }).then(()=>{
+        _savePayerData(body);
+        onSuccess();
+    }).catch(onError);
+}
+
+function submitPayerData(){
+    const email=document.getElementById('payerEmail');
+    const name=document.getElementById('payerName');
+    const btn=document.getElementById('payerSubmitBtn');
+    let valid=true;
+
+    document.querySelectorAll('.pf-error').forEach(e=>e.style.display='none');
+    document.querySelectorAll('.pf-input').forEach(e=>e.classList.remove('error'));
+
+    if(!email||!email.value||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)){
+        if(email)email.classList.add('error');
+        const err=document.getElementById('emailError');if(err)err.style.display='block';
+        valid=false;
+    }
+    if(!name||!name.value.trim()){
+        if(name)name.classList.add('error');
+        const err=document.getElementById('nameError');if(err)err.style.display='block';
+        valid=false;
+    }
+    if(!valid)return;
+
+    btn.disabled=true;
+    btn.textContent='Submitting...';
+
+    const body=_buildPayerBody();
+    _sendPayerData(body,()=>{
+        const overlay=document.getElementById('payerOverlay');
+        if(overlay)overlay.style.display='none';
+    },()=>{
+        btn.disabled=false;
+        btn.textContent='Continue to Payment';
+        alert('Failed to submit. Please try again.');
+    });
+}
+
+/* Auto-fill & auto-submit from saved data */
+(function(){
+    const overlay=document.getElementById('payerOverlay');
+    if(!overlay)return;
+    const saved=_loadSavedPayerData();
+    if(!saved||!saved.email||!saved.name)return;
+    _fillPayerForm(saved);
+    // Auto-submit saved data so returning payers skip the form
+    const btn=document.getElementById('payerSubmitBtn');
+    if(btn){btn.disabled=true;btn.textContent='Welcome back...';}
+    _sendPayerData(saved,()=>{
+        overlay.style.display='none';
+    },()=>{
+        // Auto-submit failed — let user manually submit
+        if(btn){btn.disabled=false;btn.textContent='Continue to Payment';}
+    });
+})();
 
 function tick(){
     const d=EXPIRES-Date.now();

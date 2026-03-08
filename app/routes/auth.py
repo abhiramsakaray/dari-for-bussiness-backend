@@ -55,7 +55,9 @@ async def register_merchant(
     
     return TokenResponse(
         access_token=access_token,
-        api_key=new_merchant.api_key
+        api_key=new_merchant.api_key,
+        onboarding_completed=False,
+        onboarding_step=0,
     )
 
 
@@ -105,7 +107,9 @@ async def login_merchant(
     
     return TokenResponse(
         access_token=access_token,
-        api_key=merchant.api_key
+        api_key=merchant.api_key,
+        onboarding_completed=merchant.onboarding_completed or False,
+        onboarding_step=merchant.onboarding_step or 0,
     )
 
 
@@ -162,9 +166,8 @@ async def google_auth(
             api_key=merchant.api_key or "",
             is_new_user=False,
             onboarding_completed=merchant.onboarding_completed or False,
+            onboarding_step=merchant.onboarding_step or 0,
         )
-    
-    # Check if email already registered (non-Google account)
     existing_by_email = db.query(Merchant).filter(Merchant.email == email).first()
     
     if existing_by_email:
@@ -187,6 +190,7 @@ async def google_auth(
             api_key=existing_by_email.api_key or "",
             is_new_user=False,
             onboarding_completed=existing_by_email.onboarding_completed or False,
+            onboarding_step=existing_by_email.onboarding_step or 0,
         )
     
     # New user → create merchant account
@@ -216,6 +220,7 @@ async def google_auth(
         api_key=new_merchant.api_key,
         is_new_user=True,
         onboarding_completed=False,
+        onboarding_step=0,
     )
 
 

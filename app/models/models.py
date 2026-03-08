@@ -316,6 +316,14 @@ class PaymentSession(Base):
     order_id = Column(String, nullable=True)  # Merchant's order ID
     session_metadata = Column(JSON, nullable=True)  # Additional metadata
     
+    # Payer data collection
+    collect_payer_data = Column(Boolean, default=True)  # Require payer info before payment
+    payer_email = Column(String(255), nullable=True)
+    payer_name = Column(String(255), nullable=True)
+    
+    # Tokenization
+    payment_token = Column(String(100), nullable=True, index=True)  # ptok_xxx
+    
     # Relationships
     merchant = relationship("Merchant", back_populates="payment_sessions")
 
@@ -938,3 +946,42 @@ class APIKey(Base):
     # Relationships
     merchant = relationship("Merchant")
 
+
+# ============= PAYER INFO =============
+
+class PayerInfo(Base):
+    """Collected payer/customer data for a payment session"""
+    __tablename__ = "payer_info"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=False, index=True)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
+
+    # Contact
+    email = Column(String(255), nullable=True)
+    name = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
+
+    # Billing address
+    billing_address_line1 = Column(String(255), nullable=True)
+    billing_address_line2 = Column(String(255), nullable=True)
+    billing_city = Column(String(100), nullable=True)
+    billing_state = Column(String(100), nullable=True)
+    billing_postal_code = Column(String(20), nullable=True)
+    billing_country = Column(String(100), nullable=True)
+
+    # Shipping address (optional)
+    shipping_address_line1 = Column(String(255), nullable=True)
+    shipping_city = Column(String(100), nullable=True)
+    shipping_state = Column(String(100), nullable=True)
+    shipping_postal_code = Column(String(20), nullable=True)
+    shipping_country = Column(String(100), nullable=True)
+
+    # Metadata
+    custom_fields = Column(JSON, nullable=True)  # merchant-defined extra fields
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    payment_session = relationship("PaymentSession", backref="payer_info_rel")
+    merchant = relationship("Merchant")
