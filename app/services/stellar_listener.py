@@ -122,6 +122,34 @@ class StellarPaymentListener:
             
             db.commit()
             db.refresh(session)
+
+            # Update merchant subscription volume (full original amount)
+            try:
+                from app.services.payment_utils import update_merchant_volume
+                update_merchant_volume(db, session.merchant_id, session.amount_fiat)
+            except Exception as ve:
+                logger.error(f"Error updating volume for {memo}: {ve}")
+
+            # Record coupon usage if a coupon was applied to this session
+            if session.coupon_code:
+                try:
+                    from app.services.promo_service import record_coupon_usage
+                    from app.models.models import PromoCode
+                    promo = db.query(PromoCode).filter(
+                        PromoCode.merchant_id == session.merchant_id,
+                        PromoCode.code == session.coupon_code,
+                    ).first()
+                    if promo:
+                        record_coupon_usage(
+                            db=db,
+                            promo_code_id=str(promo.id),
+                            merchant_id=str(session.merchant_id),
+                            customer_id=session.payer_email or "anonymous",
+                            payment_id=session.id,
+                            discount_applied=session.discount_amount or 0,
+                        )
+                except Exception as ce:
+                    logger.error(f"Error recording coupon usage for {memo}: {ce}")
             
             # Send webhook notification
             if session.merchant.webhook_url:

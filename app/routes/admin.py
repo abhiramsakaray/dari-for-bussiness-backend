@@ -52,7 +52,10 @@ async def list_all_payments(
             status=session.status.value,
             tx_hash=session.tx_hash,
             created_at=session.created_at,
-            paid_at=session.paid_at
+            paid_at=session.paid_at,
+            coupon_code=session.coupon_code,
+            discount_amount=session.discount_amount,
+            amount_paid=session.amount_fiat - (session.discount_amount or 0) if session.discount_amount else None,
         )
         for session in sessions
     ]

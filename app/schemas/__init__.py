@@ -65,6 +65,18 @@ from app.schemas.schemas import (
     # Payment & subscription tracking
     PaymentTrackingResponse,
     SubscriptionTrackingResponse,
+    # Promo code schemas
+    PromoCodeTypeEnum,
+    PromoCodeStatusEnum,
+    PromoCodeCreate,
+    PromoCodeUpdate,
+    PromoCodeStatusUpdate,
+    PromoCodeResponse,
+    PromoCodeList,
+    ApplyCouponRequest,
+    ApplyCouponResponse,
+    PromoCodeAnalyticsResponse,
+    PromoCodeUsageResponse,
 )
 
 __all__ = [
@@ -133,4 +145,16 @@ __all__ = [
     # Payment & subscription tracking
     "PaymentTrackingResponse",
     "SubscriptionTrackingResponse",
+    # Promo code schemas
+    "PromoCodeTypeEnum",
+    "PromoCodeStatusEnum",
+    "PromoCodeCreate",
+    "PromoCodeUpdate",
+    "PromoCodeStatusUpdate",
+    "PromoCodeResponse",
+    "PromoCodeList",
+    "ApplyCouponRequest",
+    "ApplyCouponResponse",
+    "PromoCodeAnalyticsResponse",
+    "PromoCodeUsageResponse",
 ]

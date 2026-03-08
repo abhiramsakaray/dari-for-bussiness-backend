@@ -394,6 +394,21 @@
             </div>
 
             {% if status == 'created' %}
+            <!-- Coupon Section -->
+            <div style="margin-bottom:20px;padding:14px;background:#f8f9fa;border-radius:12px;border:1px solid #e9ecef">
+                <div style="font-size:13px;font-weight:600;color:#6c757d;cursor:pointer" onclick="document.getElementById('mcCouponForm').style.display=document.getElementById('mcCouponForm').style.display==='none'?'block':'none'">🏷️ Have a promo code?</div>
+                <div id="mcCouponForm" style="display:none;margin-top:10px">
+                    <div style="display:flex;gap:8px">
+                        <input id="mcCouponInput" type="text" placeholder="Enter code" maxlength="50" autocomplete="off" style="flex:1;padding:10px 14px;border:2px solid #e9ecef;border-radius:10px;font-size:14px;font-family:inherit;outline:none">
+                        <button id="mcCouponBtn" onclick="mcApplyCoupon()" style="padding:10px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:13px;font-weight:600;cursor:pointer">Apply</button>
+                    </div>
+                    <div id="mcCouponMsg" style="font-size:12px;margin-top:6px;font-weight:600"></div>
+                    <div id="mcDiscountRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #e9ecef;font-size:13px;font-weight:600;color:#16a34a;display:flex;justify-content:space-between">
+                        <span>Discount</span><span id="mcDiscountAmt"></span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Payment Method Selection -->
             <div class="method-section" id="method-section">
                 <div class="section-title">Choose Payment Method</div>
@@ -658,6 +673,69 @@
         setInterval(updateTimer, 1000);
         updateTimer();
         {% endif %}
+
+        /* ── Coupon ── */
+        function mcApplyCoupon(){
+            const inp=document.getElementById('mcCouponInput');
+            const btn=document.getElementById('mcCouponBtn');
+            const msg=document.getElementById('mcCouponMsg');
+            const code=(inp.value||'').trim();
+            if(!code){msg.style.color='#e74c3c';msg.textContent='Enter a code';return;}
+            btn.disabled=true;btn.textContent='...';
+
+            fetch('/api/payment/apply-coupon',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({
+                    merchant_id:'{{ merchant_id | default("") }}',
+                    payment_link_id:sessionId,
+                    coupon_code:code,
+                    order_amount:parseFloat('{{ amount_fiat }}'),
+                    customer_id:'anonymous'
+                })
+            }).then(r=>r.json()).then(d=>{
+                btn.disabled=false;btn.textContent='Apply';
+                if(d.coupon_valid){
+                    msg.style.color='#16a34a';msg.textContent='✓ '+d.message;
+                    const dr=document.getElementById('mcDiscountRow');
+                    dr.style.display='flex';
+                    document.getElementById('mcDiscountAmt').textContent='-$'+parseFloat(d.discount_amount).toFixed(2);
+                    // Update amount display
+                    const amtEl=document.querySelector('.amount');
+                    if(amtEl)amtEl.innerHTML='<span class="currency">{{ fiat_currency }}</span> '+parseFloat(d.final_amount).toFixed(2);
+                    inp.disabled=true;btn.textContent='✓';btn.disabled=true;
+
+                    // If 100% discount → auto-complete payment
+                    if(parseFloat(d.final_amount)<=0){
+                        msg.textContent='✓ 100% discount! Completing payment...';
+                        fetch('/api/payment/complete-coupon-payment',{
+                            method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({session_id:sessionId,coupon_code:d.coupon_code})
+                        }).then(r=>r.json()).then(res=>{
+                            if(res.status==='paid'||res.status==='already_paid'){
+                                if(pollInterval)clearInterval(pollInterval);
+                                document.querySelector('.payment-status').innerHTML='<div style="text-align:center;color:#16a34a;font-weight:700;font-size:18px">✅ Payment Complete — 100% Coupon!</div>';
+                                setTimeout(()=>location.href=successUrl,2000);
+                            }else{
+                                msg.style.color='#e74c3c';msg.textContent=res.detail||res.message||'Error completing payment';
+                            }
+                        }).catch(()=>{
+                            msg.style.color='#e74c3c';msg.textContent='Error completing payment. Please refresh.';
+                        });
+                    }
+                }else{
+                    msg.style.color='#e74c3c';msg.textContent=d.message||'Invalid coupon';
+                }
+            }).catch(()=>{
+                btn.disabled=false;btn.textContent='Apply';
+                msg.style.color='#e74c3c';msg.textContent='Error applying coupon';
+            });
+        }
+        document.addEventListener('DOMContentLoaded',function(){
+            const inp=document.getElementById('mcCouponInput');
+            if(inp)inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();mcApplyCoupon();}});
+        });
     </script>
 </body>
 </html>

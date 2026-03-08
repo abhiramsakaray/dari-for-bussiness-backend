@@ -7,11 +7,59 @@ import logging
 from app.core import get_db, require_merchant
 from app.core.cache import cache, make_cache_key
 from app.models import Merchant, PaymentSession, PaymentStatus
-from app.schemas import PaymentSessionStatus, PaymentListItem
+from app.schemas import PaymentSessionStatus, PaymentListItem, LocalCurrencyAmount
+from app.services.currency_service import get_currency_for_country, build_local_amount
 from decimal import Decimal
 
 router = APIRouter(prefix="/merchant/payments", tags=["Merchant Payments"])
 logger = logging.getLogger(__name__)
+
+
+def _session_to_list_item(session: PaymentSession) -> PaymentListItem:
+    """Convert a PaymentSession ORM object to a PaymentListItem with coupon breakdown."""
+    discount = session.discount_amount or Decimal("0")
+    return PaymentListItem(
+        id=session.id,
+        merchant_id=str(session.merchant_id),
+        merchant_name=session.merchant.name if session.merchant else "Unknown",
+        amount_fiat=session.amount_fiat,
+        fiat_currency=session.fiat_currency,
+        amount_usdc=session.amount_usdc,
+        status=session.status.value,
+        tx_hash=session.tx_hash,
+        created_at=session.created_at,
+        paid_at=session.paid_at,
+        expires_at=session.expires_at,
+        payer_email=session.payer_email,
+        payer_name=session.payer_name,
+        coupon_code=session.coupon_code,
+        discount_amount=session.discount_amount,
+        amount_paid=session.amount_fiat - discount if session.discount_amount else None,
+    )
+
+
+async def _enrich_with_local_currency(
+    items: list[PaymentListItem],
+    merchant: Merchant,
+) -> list[PaymentListItem]:
+    """Add local currency conversions to payment list items."""
+    currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
+    if currency_code == "USD":
+        return items
+
+    for item in items:
+        item.amount_fiat_local = LocalCurrencyAmount(
+            **(await build_local_amount(float(item.amount_fiat), currency_code, currency_symbol))
+        )
+        if item.discount_amount is not None:
+            item.discount_amount_local = LocalCurrencyAmount(
+                **(await build_local_amount(float(item.discount_amount), currency_code, currency_symbol))
+            )
+        if item.amount_paid is not None:
+            item.amount_paid_local = LocalCurrencyAmount(
+                **(await build_local_amount(float(item.amount_paid), currency_code, currency_symbol))
+            )
+    return items
 
 
 @router.get("", response_model=List[PaymentListItem])
@@ -49,24 +97,12 @@ async def get_my_payment_sessions(
         # Order by created_at descending (newest first)
         sessions = query.order_by(PaymentSession.created_at.desc()).offset(offset).limit(limit).all()
         
-        payment_list = [
-            PaymentListItem(
-                id=session.id,
-                merchant_id=str(session.merchant_id),
-                merchant_name=session.merchant.name if session.merchant else "Unknown",
-                amount_fiat=session.amount_fiat,
-                fiat_currency=session.fiat_currency,
-                amount_usdc=session.amount_usdc,
-                status=session.status.value,
-                tx_hash=session.tx_hash,
-                created_at=session.created_at,
-                paid_at=session.paid_at,
-                expires_at=session.expires_at,
-                payer_email=session.payer_email,
-                payer_name=session.payer_name,
-            )
-            for session in sessions
-        ]
+        payment_list = [_session_to_list_item(session) for session in sessions]
+        
+        # Enrich with local currency
+        merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
+        if merchant:
+            payment_list = await _enrich_with_local_currency(payment_list, merchant)
         
         logger.info(f"Found {len(payment_list)} payment sessions for merchant {merchant_uuid}")
         cache.set(ck, payment_list, region="payments")
@@ -118,7 +154,9 @@ async def get_payment_stats(
         PaymentSession.status == PaymentStatus.PAID
     ).all()
     
-    total_usdc = sum(Decimal(session.amount_usdc) for session in paid_sessions)
+    total_usdc = sum(Decimal(session.amount_usdc or "0") for session in paid_sessions)
+    total_coupon_discount = sum(session.discount_amount or Decimal("0") for session in paid_sessions)
+    coupon_payment_count = sum(1 for s in paid_sessions if s.coupon_code)
     
     # Today's stats
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -139,6 +177,12 @@ async def get_payment_stats(
     # Success rate
     success_rate = (paid_count / total_sessions * 100) if total_sessions > 0 else 0
     
+    # Local currency conversion
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    currency_code, currency_symbol, _ = get_currency_for_country(merchant.country if merchant else None)
+    revenue_local = await build_local_amount(float(total_usdc), currency_code, currency_symbol)
+    discount_local = await build_local_amount(float(total_coupon_discount), currency_code, currency_symbol)
+    
     return {
         "total_sessions": total_sessions,
         "sessions_by_status": {
@@ -148,7 +192,11 @@ async def get_payment_stats(
         },
         "revenue": {
             "total_usdc": float(total_usdc),
-            "currency": "USDC"
+            "currency": "USDC",
+            "total_coupon_discount": float(total_coupon_discount),
+            "coupon_payment_count": coupon_payment_count,
+            "total_local": revenue_local,
+            "total_coupon_discount_local": discount_local,
         },
         "recent": {
             "today": today_paid,
@@ -165,32 +213,21 @@ async def get_recent_payments(
     limit: int = Query(10, le=50, description="Number of recent payments to return")
 ):
     """Get recent payment sessions for the authenticated merchant."""
+    merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
     sessions = db.query(PaymentSession).filter(
-        PaymentSession.merchant_id == current_user["id"]
+        PaymentSession.merchant_id == merchant_uuid
     ).order_by(
         PaymentSession.created_at.desc()
     ).limit(limit).all()
     
-    return [
-        PaymentListItem(
-            id=session.id,
-            merchant_id=str(session.merchant_id),
-            merchant_name=session.merchant.name,
-            amount_fiat=session.amount_fiat,
-            fiat_currency=session.fiat_currency,
-            amount_usdc=session.amount_usdc,
-            status=session.status.value,
-            tx_hash=session.tx_hash,
-            created_at=session.created_at,
-            paid_at=session.paid_at,
-            expires_at=session.expires_at,
-            payer_email=session.payer_email,
-            payer_name=session.payer_name,
-        )
-        for session in sessions
-    ]
+    items = [_session_to_list_item(session) for session in sessions]
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
+    if merchant:
+        items = await _enrich_with_local_currency(items, merchant)
+    return items
 
 
+# ── Payer leads ──
 @router.get("/payer-leads", response_model=List[PaymentListItem])
 async def get_payer_leads(
     current_user: dict = Depends(require_merchant),
@@ -215,24 +252,11 @@ async def get_payer_leads(
 
     sessions = query.order_by(PaymentSession.created_at.desc()).offset(offset).limit(limit).all()
 
-    return [
-        PaymentListItem(
-            id=session.id,
-            merchant_id=str(session.merchant_id),
-            merchant_name=session.merchant.name if session.merchant else "",
-            amount_fiat=session.amount_fiat,
-            fiat_currency=session.fiat_currency,
-            amount_usdc=session.amount_usdc,
-            status=session.status.value,
-            tx_hash=session.tx_hash,
-            created_at=session.created_at,
-            paid_at=session.paid_at,
-            expires_at=session.expires_at,
-            payer_email=session.payer_email,
-            payer_name=session.payer_name,
-        )
-        for session in sessions
-    ]
+    items = [_session_to_list_item(session) for session in sessions]
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
+    if merchant:
+        items = await _enrich_with_local_currency(items, merchant)
+    return items
 
 
 @router.get("/{session_id}", response_model=PaymentSessionStatus)

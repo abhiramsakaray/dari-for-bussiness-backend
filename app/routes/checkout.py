@@ -342,6 +342,7 @@ async def checkout_page(
         "expires_at": expiry_time.isoformat() + "Z",
         "collect_payer_data": bool(session.collect_payer_data),
         "payer_data_submitted": payer_exists,
+        "merchant_id": str(session.merchant_id),
     })
 
 

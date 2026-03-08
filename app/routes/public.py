@@ -37,7 +37,9 @@ async def verify_payment_session(
         "amount_usdc": session.amount_usdc,
         "merchant_name": session.merchant.name,
         "is_expired": is_expired,
-        "created_at": session.created_at
+        "created_at": session.created_at,
+        "coupon_code": session.coupon_code,
+        "discount_amount": float(session.discount_amount) if session.discount_amount else None,
     }
 
 

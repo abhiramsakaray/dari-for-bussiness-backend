@@ -17,6 +17,10 @@ from app.models.models import (
     WithdrawalStatus,
     WithdrawalLimit,
     PayerInfo,
+    PromoCode,
+    PromoCodeUsage,
+    PromoCodeType,
+    PromoCodeStatus,
 )
 
 __all__ = [
@@ -36,4 +40,8 @@ __all__ = [
     "Withdrawal",
     "WithdrawalStatus",
     "WithdrawalLimit",
+    "PromoCode",
+    "PromoCodeUsage",
+    "PromoCodeType",
+    "PromoCodeStatus",
 ]

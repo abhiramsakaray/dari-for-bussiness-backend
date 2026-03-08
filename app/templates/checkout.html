@@ -27,6 +27,24 @@
         .price-crypto{margin-top:10px;font-size:13px;font-weight:500;opacity:.8;display:flex;align-items:center;gap:6px}
         .price-crypto .tag{background:rgba(255,255,255,.14);padding:2px 10px;border-radius:6px;font-size:12px;font-weight:600}
 
+        /* ── COUPON ── */
+        .coupon-box{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:13px 16px;margin-bottom:20px}
+        .coupon-toggle{font-size:12px;font-weight:600;color:rgba(255,255,255,.75);cursor:pointer;display:flex;align-items:center;gap:6px}
+        .coupon-toggle:hover{color:#fff}
+        .coupon-form{display:none;margin-top:10px}
+        .coupon-form.show{display:block}
+        .coupon-row{display:flex;gap:6px}
+        .coupon-input{flex:1;padding:8px 12px;border:1.5px solid rgba(255,255,255,.2);border-radius:8px;font-size:13px;font-family:inherit;background:rgba(255,255,255,.08);color:#fff;outline:none}
+        .coupon-input::placeholder{color:rgba(255,255,255,.4)}
+        .coupon-input:focus{border-color:rgba(255,255,255,.45)}
+        .coupon-btn{padding:8px 16px;border:none;border-radius:8px;background:rgba(255,255,255,.18);color:#fff;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s}
+        .coupon-btn:hover{background:rgba(255,255,255,.28)}
+        .coupon-btn:disabled{opacity:.5;cursor:not-allowed}
+        .coupon-msg{font-size:11px;margin-top:6px;font-weight:600}
+        .coupon-msg.success{color:#4ade80}
+        .coupon-msg.error{color:#f87171}
+        .discount-row{display:flex;justify-content:space-between;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;font-weight:600;color:#4ade80}
+
         .timer-box{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:13px 16px;display:flex;align-items:center;gap:10px;margin-bottom:20px}
         .timer-box svg{width:18px;height:18px;opacity:.8}
         .timer-txt{font-size:13px;font-weight:500;opacity:.8}
@@ -181,6 +199,24 @@
             <div id="priceLocalSub" style="display:none;font-size:12px;color:#9ca3af;margin-top:2px;font-family:'Inter',sans-serif"></div>
             <div class="price-crypto">
                 &#8776; <span class="tag">{{ amount_token }} {{ token }}</span> on {{ chain_name }}
+            </div>
+        </div>
+
+        <!-- ── COUPON ── -->
+        <div class="coupon-box" id="couponBox">
+            <div class="coupon-toggle" onclick="toggleCouponForm()">
+                🏷️ Have a promo code?
+            </div>
+            <div class="coupon-form" id="couponForm">
+                <div class="coupon-row">
+                    <input class="coupon-input" type="text" id="couponInput" placeholder="Enter code" maxlength="50" autocomplete="off">
+                    <button class="coupon-btn" id="couponBtn" onclick="applyCoupon()">Apply</button>
+                </div>
+                <div class="coupon-msg" id="couponMsg"></div>
+                <div class="discount-row" id="discountRow" style="display:none">
+                    <span>Discount</span>
+                    <span id="discountAmount"></span>
+                </div>
             </div>
         </div>
 
@@ -647,6 +683,89 @@ function showHelp(){alert('How to pay:\n\n1. Choose a blockchain on the left\n2.
 
 tick();setInterval(tick,1000);
 checkPay();poll=setInterval(checkPay,3000);
+
+/* ── Coupon / Promo Code ── */
+let appliedCoupon=null;
+
+function toggleCouponForm(){
+    document.getElementById('couponForm').classList.toggle('show');
+    const inp=document.getElementById('couponInput');
+    if(inp)inp.focus();
+}
+
+function applyCoupon(){
+    const inp=document.getElementById('couponInput');
+    const btn=document.getElementById('couponBtn');
+    const msg=document.getElementById('couponMsg');
+    const code=(inp.value||'').trim();
+    if(!code){msg.className='coupon-msg error';msg.textContent='Enter a code';return;}
+
+    btn.disabled=true;btn.textContent='...';
+
+    // Determine customer_id from payer data if available
+    const payerEmail=(document.getElementById('payerEmail')||{}).value||'anonymous';
+
+    fetch('/api/payment/apply-coupon',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            merchant_id:'{{ merchant_id }}',
+            payment_link_id:SESSION,
+            coupon_code:code,
+            order_amount:BASE_AMOUNT_USD,
+            customer_id:payerEmail
+        })
+    }).then(r=>r.json()).then(d=>{
+        btn.disabled=false;btn.textContent='Apply';
+        if(d.coupon_valid){
+            msg.className='coupon-msg success';
+            msg.textContent='✓ '+d.message;
+            document.getElementById('discountRow').style.display='flex';
+            document.getElementById('discountAmount').textContent='-$'+parseFloat(d.discount_amount).toFixed(2);
+            // Update price display
+            const el=document.getElementById('priceFiat');
+            if(el)el.textContent='$'+parseFloat(d.final_amount).toFixed(2);
+            appliedCoupon={code:d.coupon_code,discount:d.discount_amount,final:d.final_amount};
+            inp.disabled=true;btn.textContent='✓';btn.disabled=true;
+
+            // If 100% discount → auto-complete payment (no blockchain payment needed)
+            if(parseFloat(d.final_amount)<=0){
+                msg.textContent='✓ 100% discount! Completing payment...';
+                fetch('/api/payment/complete-coupon-payment',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({session_id:SESSION,coupon_code:d.coupon_code})
+                }).then(r=>r.json()).then(res=>{
+                    if(res.status==='paid'||res.status==='already_paid'){
+                        setStatus('paid','Payment Complete — 100% Coupon!');
+                        clearInterval(poll);
+                        setTimeout(()=>location.href=SUCCESS,2000);
+                    }else{
+                        msg.className='coupon-msg error';
+                        msg.textContent=res.detail||res.message||'Error completing payment';
+                    }
+                }).catch(()=>{
+                    msg.className='coupon-msg error';
+                    msg.textContent='Error completing payment. Please refresh.';
+                });
+            }
+        }else{
+            msg.className='coupon-msg error';
+            msg.textContent=d.message||'Invalid coupon';
+            document.getElementById('discountRow').style.display='none';
+            appliedCoupon=null;
+        }
+    }).catch(()=>{
+        btn.disabled=false;btn.textContent='Apply';
+        msg.className='coupon-msg error';msg.textContent='Error applying coupon';
+    });
+}
+
+// Allow Enter key to apply coupon
+document.addEventListener('DOMContentLoaded',function(){
+    const inp=document.getElementById('couponInput');
+    if(inp)inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();applyCoupon();}});
+});
 </script>
 </body>
 </html>

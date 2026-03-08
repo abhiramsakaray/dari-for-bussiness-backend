@@ -1,6 +1,9 @@
 import secrets
 import string
+import logging
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 
 def generate_session_id() -> str:
@@ -31,3 +34,22 @@ def convert_fiat_to_usdc(amount: Decimal, currency: str) -> str:
     
     # Return as string with 2 decimal places
     return f"{usdc_amount:.2f}"
+
+
+def update_merchant_volume(db, merchant_id, amount_fiat: Decimal) -> None:
+    """
+    Increment the merchant's subscription volume by amount_fiat (the full
+    original order amount, before any coupon discount).
+    """
+    from app.models.models import MerchantSubscription
+    sub = (
+        db.query(MerchantSubscription)
+        .filter(MerchantSubscription.merchant_id == merchant_id)
+        .first()
+    )
+    if sub:
+        sub.current_volume = (sub.current_volume or Decimal("0")) + amount_fiat
+        db.commit()
+        logger.info(f"Updated volume for merchant {merchant_id}: +{amount_fiat} → {sub.current_volume}")
+    else:
+        logger.warning(f"No subscription found for merchant {merchant_id}, skipping volume update")

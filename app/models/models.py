@@ -324,6 +324,10 @@ class PaymentSession(Base):
     # Tokenization
     payment_token = Column(String(100), nullable=True, index=True)  # ptok_xxx
     
+    # Coupon / Promo code tracking
+    coupon_code = Column(String(50), nullable=True)
+    discount_amount = Column(Numeric(precision=14, scale=2), nullable=True)
+    
     # Relationships
     merchant = relationship("Merchant", back_populates="payment_sessions")
 
@@ -985,3 +989,75 @@ class PayerInfo(Base):
     # Relationships
     payment_session = relationship("PaymentSession", backref="payer_info_rel")
     merchant = relationship("Merchant")
+
+
+# ============= PROMO CODES =============
+
+class PromoCodeType(str, enum.Enum):
+    PERCENTAGE = "percentage"
+    FIXED = "fixed"
+
+
+class PromoCodeStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    DELETED = "deleted"
+
+
+class PromoCode(Base):
+    """Merchant promo/coupon codes"""
+    __tablename__ = "promo_codes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+
+    code = Column(String(50), nullable=False)
+    type = Column(String(20), nullable=False)  # percentage, fixed
+    discount_value = Column(Numeric(precision=14, scale=2), nullable=False)
+    max_discount_amount = Column(Numeric(precision=14, scale=2), nullable=True)
+    min_order_amount = Column(Numeric(precision=14, scale=2), default=0)
+
+    usage_limit_total = Column(Integer, nullable=True)
+    usage_limit_per_user = Column(Integer, nullable=True)
+    used_count = Column(Integer, default=0, nullable=False)
+
+    start_date = Column(DateTime, nullable=False)
+    expiry_date = Column(DateTime, nullable=False)
+    status = Column(String(20), default="active", nullable=False)  # active, inactive, deleted
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    merchant = relationship("Merchant")
+    usage_records = relationship("PromoCodeUsage", back_populates="promo_code", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint('merchant_id', 'code', name='uq_promo_merchant_code'),
+        Index('idx_promo_codes_merchant_id', 'merchant_id'),
+        Index('idx_promo_codes_code', 'code'),
+        Index('idx_promo_codes_status', 'status'),
+    )
+
+
+class PromoCodeUsage(Base):
+    """Tracks individual coupon usage"""
+    __tablename__ = "promo_code_usage"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    promo_code_id = Column(UUID(as_uuid=True), ForeignKey("promo_codes.id"), nullable=False)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    customer_id = Column(String(255), nullable=False)
+    payment_id = Column(String(255), nullable=True)
+    discount_applied = Column(Numeric(precision=14, scale=2), nullable=False)
+    used_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    promo_code = relationship("PromoCode", back_populates="usage_records")
+    merchant = relationship("Merchant")
+
+    __table_args__ = (
+        Index('idx_promo_usage_code_id', 'promo_code_id'),
+        Index('idx_promo_usage_customer', 'promo_code_id', 'customer_id'),
+        Index('idx_promo_usage_merchant', 'merchant_id'),
+    )

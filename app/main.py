@@ -16,6 +16,8 @@ from app.routes import (
     onboarding, subscription_management, billing,
     # Withdrawals
     withdrawals,
+    # Promo codes
+    promo,
 )
 
 # Configure logging
@@ -105,6 +107,10 @@ app.include_router(onboarding.router)  # Merchant onboarding flow
 app.include_router(subscription_management.router)  # Subscription management
 app.include_router(billing.router)  # Billing endpoints (alias for subscription)
 app.include_router(withdrawals.router)  # Withdraw to external wallets
+
+# Promo code / coupon routers
+app.include_router(promo.merchant_promo_router)  # Merchant promo management
+app.include_router(promo.payment_coupon_router)  # Checkout coupon application
 
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")

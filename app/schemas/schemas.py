@@ -482,6 +482,16 @@ class PaymentListItem(BaseModel):
     payer_email: Optional[str] = None
     payer_name: Optional[str] = None
 
+    # Coupon breakdown
+    coupon_code: Optional[str] = None
+    discount_amount: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None  # amount_fiat - discount_amount
+
+    # Local currency (merchant's country-based currency)
+    amount_fiat_local: Optional[LocalCurrencyAmount] = None
+    discount_amount_local: Optional[LocalCurrencyAmount] = None
+    amount_paid_local: Optional[LocalCurrencyAmount] = None
+
     # Backward compatibility
     amount_usdc: Optional[str] = None
 
@@ -1468,4 +1478,130 @@ class SubscriptionTrackingResponse(BaseModel):
     total_paid_usd: float = 0
     payment_count: int = 0
     events: List[dict] = []
+
+
+# ============= PROMO CODE / COUPON SCHEMAS =============
+
+class PromoCodeTypeEnum(str, Enum):
+    PERCENTAGE = "percentage"
+    FIXED = "fixed"
+
+
+class PromoCodeStatusEnum(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class PromoCodeCreate(BaseModel):
+    """Create a new promo code"""
+    code: str = Field(..., min_length=2, max_length=50, description="Unique coupon code")
+    type: PromoCodeTypeEnum = Field(..., description="Discount type: percentage or fixed")
+    discount_value: Decimal = Field(..., gt=0, description="Discount value")
+    max_discount_amount: Optional[Decimal] = Field(None, ge=0, description="Max discount cap for percentage type")
+    min_order_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Minimum order amount to apply coupon")
+    usage_limit_total: Optional[int] = Field(None, ge=1, description="Max total uses")
+    usage_limit_per_user: Optional[int] = Field(None, ge=1, description="Max uses per customer")
+    start_date: datetime = Field(..., description="Coupon start date")
+    expiry_date: datetime = Field(..., description="Coupon expiry date")
+
+    @field_validator('code')
+    @classmethod
+    def normalize_code(cls, v):
+        return v.strip().upper()
+
+    @field_validator('discount_value')
+    @classmethod
+    def validate_discount_value(cls, v, info):
+        if info.data.get('type') == 'percentage' and v > 100:
+            raise ValueError('Percentage discount cannot exceed 100')
+        return v
+
+
+class PromoCodeUpdate(BaseModel):
+    """Update an existing promo code"""
+    discount_value: Optional[Decimal] = Field(None, gt=0)
+    max_discount_amount: Optional[Decimal] = Field(None, ge=0)
+    min_order_amount: Optional[Decimal] = Field(None, ge=0)
+    usage_limit_total: Optional[int] = Field(None, ge=1)
+    usage_limit_per_user: Optional[int] = Field(None, ge=1)
+    expiry_date: Optional[datetime] = None
+    status: Optional[PromoCodeStatusEnum] = None
+
+
+class PromoCodeStatusUpdate(BaseModel):
+    """Enable/disable a promo code"""
+    status: PromoCodeStatusEnum
+
+
+class PromoCodeResponse(BaseModel):
+    """Promo code response"""
+    id: str
+    code: str
+    type: str
+    discount_value: Decimal
+    max_discount_amount: Optional[Decimal] = None
+    min_order_amount: Decimal
+    usage_limit_total: Optional[int] = None
+    usage_limit_per_user: Optional[int] = None
+    used_count: int
+    start_date: datetime
+    expiry_date: datetime
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PromoCodeList(BaseModel):
+    """List of promo codes"""
+    promo_codes: List[PromoCodeResponse]
+    total: int
+
+
+class ApplyCouponRequest(BaseModel):
+    """Apply a coupon during checkout"""
+    merchant_id: str = Field(..., description="Merchant ID")
+    payment_link_id: Optional[str] = Field(None, description="Payment link ID")
+    coupon_code: str = Field(..., min_length=1, max_length=50, description="Coupon code to apply")
+    order_amount: Decimal = Field(..., gt=0, description="Order amount before discount")
+    customer_id: Optional[str] = Field(None, description="Customer identifier (email or ID)")
+
+    @field_validator('coupon_code')
+    @classmethod
+    def normalize_coupon_code(cls, v):
+        return v.strip().upper()
+
+
+class ApplyCouponResponse(BaseModel):
+    """Coupon application result"""
+    coupon_valid: bool
+    discount_amount: Decimal = Decimal("0")
+    final_amount: Decimal
+    coupon_code: Optional[str] = None
+    discount_type: Optional[str] = None
+    message: str = ""
+
+
+class PromoCodeAnalyticsResponse(BaseModel):
+    """Analytics for a specific promo code"""
+    promo_code_id: str
+    code: str
+    total_used: int
+    total_discount_given: Decimal
+    revenue_generated: Decimal
+    conversion_rate: Optional[Decimal] = None
+
+
+class PromoCodeUsageResponse(BaseModel):
+    """Individual coupon usage record"""
+    id: str
+    customer_id: str
+    payment_id: Optional[str] = None
+    discount_applied: Decimal
+    used_at: datetime
+
+    class Config:
+        from_attributes = True
 
