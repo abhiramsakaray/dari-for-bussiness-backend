@@ -19,6 +19,7 @@ from app.schemas import (
     OnboardingCompleteResponse,
     MerchantWalletResponse,
 )
+from app.services.currency_service import get_currency_for_country
 
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
 logger = logging.getLogger(__name__)
@@ -61,6 +62,9 @@ async def get_onboarding_status(
         business_name=merchant.business_name,
         business_email=merchant.business_email,
         country=merchant.country,
+        base_currency=merchant.base_currency or "USD",
+        currency_symbol=merchant.currency_symbol or "$",
+        currency_name=merchant.currency_name or "US Dollar",
         has_wallets=wallet_count > 0,
         wallet_count=wallet_count,
     )
@@ -89,6 +93,12 @@ async def set_business_details(
     merchant.merchant_category = details.merchant_category.value
     merchant.onboarding_step = max(merchant.onboarding_step or 0, 1)
 
+    # Auto-set currency from country
+    currency_code, currency_symbol, currency_name = get_currency_for_country(details.country)
+    merchant.base_currency = currency_code
+    merchant.currency_symbol = currency_symbol
+    merchant.currency_name = currency_name
+
     db.commit()
     db.refresh(merchant)
 
@@ -109,6 +119,9 @@ async def set_business_details(
         business_name=merchant.business_name,
         business_email=merchant.business_email,
         country=merchant.country,
+        base_currency=merchant.base_currency or "USD",
+        currency_symbol=merchant.currency_symbol or "$",
+        currency_name=merchant.currency_name or "US Dollar",
         has_wallets=wallet_count > 0,
         wallet_count=wallet_count,
     )

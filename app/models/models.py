@@ -49,6 +49,7 @@ class InvoiceStatus(str, enum.Enum):
 class SubscriptionStatus(str, enum.Enum):
     """Subscription status"""
     ACTIVE = "active"
+    PENDING_PAYMENT = "pending_payment"
     PAUSED = "paused"
     CANCELLED = "cancelled"
     PAST_DUE = "past_due"
@@ -194,6 +195,11 @@ class Merchant(Base):
     
     # Subscription tier
     subscription_tier = Column(String(20), default="free", nullable=False)  # free, growth, business, enterprise
+    
+    # Currency (derived from country during onboarding)
+    base_currency = Column(String(10), default="USD", nullable=False)
+    currency_symbol = Column(String(10), default="$", nullable=False)
+    currency_name = Column(String(50), default="US Dollar", nullable=False)
     
     # Balance tracking
     balance_usdc = Column(Numeric(precision=20, scale=8), default=0, nullable=False)

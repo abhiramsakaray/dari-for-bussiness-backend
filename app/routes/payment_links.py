@@ -59,13 +59,15 @@ async def create_payment_link(
     
     link_id = generate_link_id()
     
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
+    
     payment_link = PaymentLink(
         id=link_id,
         merchant_id=uuid.UUID(current_user["id"]),
         name=link_data.name,
         description=link_data.description,
         amount_fiat=link_data.amount_fiat,
-        fiat_currency=link_data.fiat_currency.upper(),
+        fiat_currency=(link_data.fiat_currency or merchant.base_currency).upper(),
         is_amount_fixed=link_data.is_amount_fixed,
         min_amount=link_data.min_amount,
         max_amount=link_data.max_amount,

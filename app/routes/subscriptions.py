@@ -92,7 +92,7 @@ async def create_plan(
         name=plan_data.name,
         description=plan_data.description,
         amount=plan_data.amount,
-        fiat_currency=plan_data.fiat_currency.upper(),
+        fiat_currency=(plan_data.fiat_currency or merchant.base_currency).upper(),
         interval=db_interval,
         interval_count=plan_data.interval_count,
         trial_days=plan_data.trial_days,
@@ -255,6 +255,7 @@ async def create_subscription(
             Subscription.customer_email == sub_data.customer_email,
             Subscription.status.in_([
                 DBSubscriptionStatus.ACTIVE,
+                DBSubscriptionStatus.PENDING_PAYMENT,
                 DBSubscriptionStatus.TRIALING,
                 DBSubscriptionStatus.PAST_DUE
             ])
@@ -273,7 +274,7 @@ async def create_subscription(
     # Determine trial period
     trial_start = None
     trial_end = None
-    initial_status = DBSubscriptionStatus.ACTIVE
+    initial_status = DBSubscriptionStatus.PENDING_PAYMENT
     
     # Allow custom trial days override
     effective_trial_days = plan.trial_days
@@ -314,8 +315,8 @@ async def create_subscription(
     db.add(subscription)
     
     # If not trialing (or trial is free with setup fee), create first payment record
-    if initial_status == DBSubscriptionStatus.ACTIVE or (plan.setup_fee and plan.setup_fee > 0):
-        first_amount = plan.amount if initial_status == DBSubscriptionStatus.ACTIVE else plan.setup_fee
+    if initial_status == DBSubscriptionStatus.PENDING_PAYMENT or (plan.setup_fee and plan.setup_fee > 0):
+        first_amount = plan.amount if initial_status == DBSubscriptionStatus.PENDING_PAYMENT else plan.setup_fee
         
         # For reduced_price trials, charge the trial price
         if initial_status == DBSubscriptionStatus.TRIALING and plan.trial_type == "reduced_price" and plan.trial_price is not None:

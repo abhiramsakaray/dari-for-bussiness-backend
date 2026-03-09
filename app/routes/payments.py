@@ -36,14 +36,15 @@ async def create_payment_session(
     session_id = generate_session_id()
     
     # Convert fiat to USDC
-    amount_usdc = convert_fiat_to_usdc(session_data.amount, session_data.currency)
+    resolved_currency = (session_data.currency or merchant.base_currency).upper()
+    amount_usdc = convert_fiat_to_usdc(session_data.amount, resolved_currency)
     
     # Create payment session
     new_session = PaymentSession(
         id=session_id,
         merchant_id=merchant.id,
         amount_fiat=session_data.amount,
-        fiat_currency=session_data.currency.upper(),
+        fiat_currency=resolved_currency,
         amount_usdc=amount_usdc,
         status=PaymentStatus.CREATED,
         success_url=str(session_data.success_url),

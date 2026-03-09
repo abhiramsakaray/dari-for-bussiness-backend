@@ -111,7 +111,7 @@ async def create_invoice(
         tax=invoice_data.tax,
         discount=invoice_data.discount,
         total=total,
-        fiat_currency=invoice_data.fiat_currency.upper(),
+        fiat_currency=(invoice_data.fiat_currency or merchant.base_currency).upper(),
         status=initial_status,
         due_date=invoice_data.due_date,
         sent_at=datetime.utcnow() if invoice_data.send_immediately else None,

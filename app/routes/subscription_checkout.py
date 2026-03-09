@@ -70,9 +70,12 @@ async def subscribe_page(
     # Interval display
     interval_label = plan.interval.value if hasattr(plan.interval, "value") else plan.interval
 
-    currency_symbols = {"USD": "$", "INR": "₹", "EUR": "€", "GBP": "£", "JPY": "¥", "AUD": "A$", "CAD": "C$", "SGD": "S$", "AED": "د.إ"}
-    fiat = (plan.fiat_currency or "USD").upper()
-    sym = currency_symbols.get(fiat, fiat + " ")
+    # Use plan's stored currency, falling back to merchant's base_currency
+    fiat = (plan.fiat_currency or (merchant.base_currency if merchant else "USD")).upper()
+    sym = (merchant.currency_symbol if merchant and merchant.base_currency == fiat else None)
+    if not sym:
+        currency_symbols = {"USD": "$", "INR": "₹", "EUR": "€", "GBP": "£", "JPY": "¥", "AUD": "A$", "CAD": "C$", "SGD": "S$", "AED": "د.إ"}
+        sym = currency_symbols.get(fiat, fiat + " ")
 
     # Button text
     if plan.trial_days and plan.trial_days > 0 and (plan.trial_type or "free") == "free":
@@ -290,6 +293,7 @@ async def subscribe_to_plan(
             Subscription.customer_email == email,
             Subscription.status.in_([
                 SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PENDING_PAYMENT,
                 SubscriptionStatus.TRIALING,
                 SubscriptionStatus.PAST_DUE,
             ]),
@@ -303,7 +307,7 @@ async def subscribe_to_plan(
 
     # Trial logic
     trial_start = trial_end = None
-    initial_status = SubscriptionStatus.ACTIVE
+    initial_status = SubscriptionStatus.PENDING_PAYMENT
     if plan.trial_days and plan.trial_days > 0:
         trial_start = now
         trial_end = now + timedelta(days=plan.trial_days)
@@ -336,7 +340,7 @@ async def subscribe_to_plan(
     needs_payment = False
     first_amount = Decimal("0")
 
-    if initial_status == SubscriptionStatus.ACTIVE:
+    if initial_status == SubscriptionStatus.PENDING_PAYMENT:
         first_amount = plan.amount
         needs_payment = True
     elif plan.trial_type == "reduced_price" and plan.trial_price and plan.trial_price > 0:

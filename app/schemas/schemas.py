@@ -103,6 +103,9 @@ class OnboardingStatusResponse(BaseModel):
     business_name: Optional[str] = None
     business_email: Optional[str] = None
     country: Optional[str] = None
+    base_currency: str = "USD"
+    currency_symbol: str = "$"
+    currency_name: str = "US Dollar"
     has_wallets: bool = False
     wallet_count: int = 0
 
@@ -127,6 +130,7 @@ class SubscriptionTierEnum(str, Enum):
 
 class SubscriptionStatusEnum(str, Enum):
     ACTIVE = "active"
+    PENDING_PAYMENT = "pending_payment"
     PAST_DUE = "past_due"
     CANCELLED = "cancelled"
     TRIALING = "trialing"
@@ -288,6 +292,9 @@ class MerchantProfile(BaseModel):
     accepted_tokens: Optional[List[str]] = None
     accepted_chains: Optional[List[str]] = None
     wallets: Optional[List[MerchantWalletResponse]] = None
+    base_currency: str = "USD"
+    currency_symbol: str = "$"
+    currency_name: str = "US Dollar"
     created_at: datetime
     
     class Config:
@@ -299,7 +306,7 @@ class MerchantProfile(BaseModel):
 class PaymentSessionCreate(BaseModel):
     """Create a new payment session (multi-chain support)"""
     amount: Decimal = Field(..., gt=0, description="Amount in fiat currency")
-    currency: str = Field(default="USD", description="Fiat currency code")
+    currency: Optional[str] = Field(default=None, description="Fiat currency code (defaults to merchant's base currency)")
     
     # Multi-chain options
     accepted_tokens: Optional[List[str]] = Field(
@@ -540,7 +547,7 @@ class PaymentLinkCreate(BaseModel):
     
     # Amount configuration
     amount_fiat: Optional[Decimal] = Field(None, gt=0, description="Amount in fiat (optional for variable amounts)")
-    fiat_currency: str = Field(default="USD", description="Fiat currency")
+    fiat_currency: Optional[str] = Field(default=None, description="Fiat currency (defaults to merchant's base currency)")
     is_amount_fixed: bool = Field(default=True, description="If false, customer enters amount")
     min_amount: Optional[Decimal] = Field(None, gt=0, description="Minimum amount if variable")
     max_amount: Optional[Decimal] = Field(None, description="Maximum amount if variable")
@@ -652,7 +659,7 @@ class InvoiceCreate(BaseModel):
     subtotal: Optional[Decimal] = None
     tax: Decimal = Field(default=Decimal("0"))
     discount: Decimal = Field(default=Decimal("0"))
-    fiat_currency: str = Field(default="USD")
+    fiat_currency: Optional[str] = Field(default=None, description="Fiat currency (defaults to merchant's base currency)")
     
     # Due date
     due_date: datetime
@@ -759,6 +766,7 @@ class SubscriptionInterval(str, Enum):
 
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
+    PENDING_PAYMENT = "pending_payment"
     PAUSED = "paused"
     CANCELLED = "cancelled"
     PAST_DUE = "past_due"
@@ -772,7 +780,7 @@ class SubscriptionPlanCreate(BaseModel):
     
     # Pricing
     amount: Decimal = Field(..., gt=0)
-    fiat_currency: str = Field(default="USD")
+    fiat_currency: Optional[str] = Field(default=None, description="Fiat currency (defaults to merchant's base currency)")
     interval: SubscriptionInterval
     interval_count: int = Field(default=1, ge=1, description="Number of intervals (e.g., 2 for bi-weekly)")
     
@@ -1087,22 +1095,28 @@ class PaymentMetrics(BaseModel):
     total_payments: int = 0
     successful_payments: int = 0
     failed_payments: int = 0
-    total_volume_usd: Decimal = Decimal("0")
-    avg_payment_usd: Optional[Decimal] = None
+    total_volume: Decimal = Decimal("0")
+    total_volume_usd: Decimal = Decimal("0")  # backward compat alias
+    avg_payment: Optional[Decimal] = None
+    avg_payment_usd: Optional[Decimal] = None  # backward compat alias
     conversion_rate: Optional[Decimal] = None  # Percentage
+    currency: str = "USD"
+    currency_symbol: str = "$"
 
 
 class VolumeByToken(BaseModel):
     """Volume breakdown by token"""
     token: str
-    volume_usd: Decimal
+    volume: Decimal
+    volume_usd: Decimal = Decimal("0")  # backward compat alias
     payment_count: int
 
 
 class VolumeByChain(BaseModel):
     """Volume breakdown by chain"""
     chain: str
-    volume_usd: Decimal
+    volume: Decimal
+    volume_usd: Decimal = Decimal("0")  # backward compat alias
     payment_count: int
 
 
@@ -1123,13 +1137,18 @@ class AnalyticsOverview(BaseModel):
     # Invoices
     invoices_sent: int = 0
     invoices_paid: int = 0
-    invoice_volume_usd: Decimal = Decimal("0")
+    invoice_volume: Decimal = Decimal("0")
+    invoice_volume_usd: Decimal = Decimal("0")  # backward compat alias
     
     # Subscriptions
     active_subscriptions: int = 0
     new_subscriptions: int = 0
     churned_subscriptions: int = 0
     subscription_mrr: Decimal = Decimal("0")  # Monthly Recurring Revenue
+    
+    # Currency context
+    currency: str = "USD"
+    currency_symbol: str = "$"
     
     # Comparison to previous period
     payments_change_pct: Optional[Decimal] = None
@@ -1139,7 +1158,8 @@ class AnalyticsOverview(BaseModel):
 class RevenueTimeSeries(BaseModel):
     """Revenue time series data point"""
     date: datetime
-    volume_usd: Decimal
+    volume: Decimal
+    volume_usd: Decimal = Decimal("0")  # backward compat alias
     payment_count: int
 
 

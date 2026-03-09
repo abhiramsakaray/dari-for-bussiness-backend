@@ -13,6 +13,7 @@ from app.schemas.schemas import PayerDataCollect, PayerDataResponse, TokenizeChe
 from app.services.payment_tokenization import (
     create_payment_token, resolve_payment_token, revoke_payment_token, sign_payload,
 )
+from decimal import Decimal
 from stellar_sdk import Keypair
 import qrcode
 import io
@@ -151,7 +152,12 @@ async def checkout_page(
         'AUD': 'A$', 'CAD': 'C$', 'SGD': 'S$', 'AED': 'د.إ',
     }
     fiat = (session.fiat_currency or 'USD').upper()
-    currency_symbol = currency_symbols.get(fiat, fiat + ' ')
+    # Prefer merchant's stored symbol, fall back to lookup
+    merchant_sym = getattr(session.merchant, 'currency_symbol', None) if session.merchant and getattr(session.merchant, 'base_currency', None) == fiat else None
+    if merchant_sym:
+        currency_symbol = merchant_sym
+    else:
+        currency_symbol = currency_symbols.get(fiat, fiat + ' ')
 
     # ── Wallet data per chain (no emojis, use icon URLs or abbreviations) ──
     _wallets = {
@@ -288,6 +294,7 @@ async def checkout_page(
 
     # ── QR Code Data Generation (EIP-681 for EVM) ──
     qr_data = payment_address  # Default fallback
+    dari_qr_data = None  # Dari App specific QR with merchant param
 
     try:
         if current_chain in ['ethereum', 'polygon', 'base'] and token_contract and chain_id:
@@ -296,12 +303,23 @@ async def checkout_page(
             amount_wei = int(Decimal(str(amount_token_val)) * (10 ** decimals))
             qr_data = f"ethereum:{token_contract}@{chain_id}/transfer?address={payment_address}&uint256={amount_wei}"
             logger.info(f"Generated EIP-681 QR: {qr_data}")
-            
+
     except Exception as e:
         logger.error(f"Error generating payment URI: {e}")
         qr_data = payment_address  # Fallback on error
 
-    # ── QR code image ──
+    # ── Dari App QR — always generate using Polygon USDC with merchant name ──
+    try:
+        polygon_usdc_contract = settings.POLYGON_USDC_ADDRESS
+        polygon_chain_id = settings.POLYGON_CHAIN_ID
+        dari_amount_wei = int(Decimal(str(amount_token_val)) * (10 ** 6))
+        merchant_name_safe = (session.merchant.name or 'Merchant').replace(' ', '%20')
+        dari_qr_data = f"ethereum:{polygon_usdc_contract}@{polygon_chain_id}/transfer?address={payment_address}&uint256={dari_amount_wei}&merchant={merchant_name_safe}"
+        logger.info(f"Generated Dari App QR: {dari_qr_data}")
+    except Exception as e:
+        logger.error(f"Error generating Dari App URI: {e}")
+
+    # ── QR code image (standard) ──
     qr = qrcode.QRCode(version=1, box_size=8, border=4)
     qr.add_data(qr_data)
     qr.make(fit=True)
@@ -309,6 +327,17 @@ async def checkout_page(
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     qr_code_b64 = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+    # ── Dari App QR code image ──
+    dari_qr_b64 = None
+    if dari_qr_data:
+        qr2 = qrcode.QRCode(version=1, box_size=8, border=4)
+        qr2.add_data(dari_qr_data)
+        qr2.make(fit=True)
+        img2 = qr2.make_image(fill_color="black", back_color="white")
+        buf2 = io.BytesIO()
+        img2.save(buf2, format="PNG")
+        dari_qr_b64 = f"data:image/png;base64,{base64.b64encode(buf2.getvalue()).decode()}"
 
     # ── Check if payer already submitted data ──
     payer_exists = db.query(PayerInfo).filter(PayerInfo.session_id == session_id).first() is not None
@@ -343,6 +372,8 @@ async def checkout_page(
         "collect_payer_data": bool(session.collect_payer_data),
         "payer_data_submitted": payer_exists,
         "merchant_id": str(session.merchant_id),
+        "dari_qr_b64": dari_qr_b64,
+        "show_dari": dari_qr_b64 is not None,
     })
 
 

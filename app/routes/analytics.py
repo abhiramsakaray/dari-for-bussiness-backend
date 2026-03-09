@@ -28,6 +28,7 @@ from app.schemas.schemas import (
     LocalCurrencyAmount,
 )
 from app.services.price_service import PriceService
+from app.services.currency_service import get_currency_for_country
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -58,6 +59,11 @@ async def get_analytics_overview(
     if cached is not None:
         return cached
     
+    # Get merchant for currency info
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    m_currency = getattr(merchant, 'base_currency', 'USD') if merchant else 'USD'
+    m_symbol = getattr(merchant, 'currency_symbol', '$') if merchant else '$'
+    
     now = datetime.utcnow()
     
     # Determine period boundaries
@@ -75,10 +81,10 @@ async def get_analytics_overview(
         prev_period_start = period_start - timedelta(days=365)
     
     # Get payment metrics for current period
-    current_metrics = get_payment_metrics(db, merchant_id, period_start, now)
+    current_metrics = get_payment_metrics(db, merchant_id, period_start, now, m_currency, m_symbol)
     
     # Get previous period for comparison
-    prev_metrics = get_payment_metrics(db, merchant_id, prev_period_start, period_start)
+    prev_metrics = get_payment_metrics(db, merchant_id, prev_period_start, period_start, m_currency, m_symbol)
     
     # Calculate changes
     payments_change = calculate_change(
@@ -86,8 +92,8 @@ async def get_analytics_overview(
         current_metrics.total_payments
     )
     volume_change = calculate_change(
-        float(prev_metrics.total_volume_usd),
-        float(current_metrics.total_volume_usd)
+        float(prev_metrics.total_volume),
+        float(current_metrics.total_volume)
     )
     
     # Get volume breakdowns
@@ -109,13 +115,16 @@ async def get_analytics_overview(
         volume_by_chain=volume_by_chain,
         invoices_sent=invoice_metrics["sent"],
         invoices_paid=invoice_metrics["paid"],
+        invoice_volume=invoice_metrics["volume"],
         invoice_volume_usd=invoice_metrics["volume"],
         active_subscriptions=subscription_metrics["active"],
         new_subscriptions=subscription_metrics["new"],
         churned_subscriptions=subscription_metrics["churned"],
         subscription_mrr=subscription_metrics["mrr"],
         payments_change_pct=payments_change,
-        volume_change_pct=volume_change
+        volume_change_pct=volume_change,
+        currency=m_currency,
+        currency_symbol=m_symbol,
     )
     cache.set(ck, result, region="analytics")
     return result
@@ -208,7 +217,7 @@ async def get_payment_summary(
         status_name = status.value if hasattr(status, 'value') else status
         summary[status_name] = {
             "count": count,
-            "total_usd": float(total) if total else 0
+            "total": float(total) if total else 0
         }
     
     return {
@@ -356,7 +365,7 @@ async def get_chain_analytics(
             {
                 "chain": d.chain,
                 "payment_count": d.count,
-                "volume_usd": float(d.volume or 0),
+                "volume": float(d.volume or 0),
                 "percentage": round((float(d.volume or 0) / total_volume * 100), 2) if total_volume > 0 else 0
             }
             for d in chain_data
@@ -372,7 +381,9 @@ def get_payment_metrics(
     db: Session, 
     merchant_id: Optional[uuid.UUID], 
     start: datetime, 
-    end: datetime
+    end: datetime,
+    currency: str = "USD",
+    currency_symbol: str = "$",
 ) -> PaymentMetrics:
     """Calculate payment metrics for a period"""
     
@@ -433,9 +444,13 @@ def get_payment_metrics(
         total_payments=total,
         successful_payments=successful,
         failed_payments=failed,
+        total_volume=volume,
         total_volume_usd=volume,
+        avg_payment=avg_payment,
         avg_payment_usd=avg_payment,
-        conversion_rate=conversion
+        conversion_rate=conversion,
+        currency=currency,
+        currency_symbol=currency_symbol,
     )
 
 
@@ -467,6 +482,7 @@ def get_volume_by_token(
     return [
         VolumeByToken(
             token=d.token,
+            volume=Decimal(str(d.volume or 0)),
             volume_usd=Decimal(str(d.volume or 0)),
             payment_count=d.count
         )
@@ -502,6 +518,7 @@ def get_volume_by_chain(
     return [
         VolumeByChain(
             chain=d.chain,
+            volume=Decimal(str(d.volume or 0)),
             volume_usd=Decimal(str(d.volume or 0)),
             payment_count=d.count
         )
@@ -652,7 +669,7 @@ def aggregate_revenue_by_interval(
     for date, data in sorted(buckets.items()):
         result.append({
             "date": date.isoformat(),
-            "volume_usd": float(data["volume"]),
+            "volume": float(data["volume"]),
             "payment_count": data["count"]
         })
     
@@ -688,19 +705,10 @@ def _to_monthly(amount: Decimal, interval: str) -> Decimal:
 
 
 async def _local_amount(usd_amount: float, merchant: Merchant) -> Optional[LocalCurrencyAmount]:
-    """Helper to convert USD to merchant's local currency."""
-    currency = (merchant.country or "").upper()
-    # Map country to currency code (simplified)
-    country_currency = {
-        "IN": ("INR", "₹"), "US": ("USD", "$"), "GB": ("GBP", "£"),
-        "EU": ("EUR", "€"), "DE": ("EUR", "€"), "FR": ("EUR", "€"),
-        "JP": ("JPY", "¥"), "AU": ("AUD", "A$"), "CA": ("CAD", "C$"),
-        "SG": ("SGD", "S$"), "AE": ("AED", "د.إ"), "INDIA": ("INR", "₹"),
-    }
-    info = country_currency.get(currency)
-    if not info:
-        return None
-    code, symbol = info
+    """Helper to convert USD to merchant's local currency using merchant's base_currency."""
+    code = getattr(merchant, 'base_currency', None) or "USD"
+    symbol = getattr(merchant, 'currency_symbol', None) or "$"
+
     if code == "USD":
         return LocalCurrencyAmount(
             amount_usdc=usd_amount, amount_local=usd_amount,
