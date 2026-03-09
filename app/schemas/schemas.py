@@ -778,10 +778,18 @@ class SubscriptionPlanCreate(BaseModel):
     
     # Trial
     trial_days: int = Field(default=0, ge=0)
+    trial_type: str = Field(default="free", description="Trial type: free or reduced_price")
+    trial_price: Optional[Decimal] = Field(None, ge=0, description="Price during trial (for reduced_price type)")
+    
+    # Setup fee
+    setup_fee: Decimal = Field(default=Decimal("0"), ge=0, description="One-time setup fee charged at subscription start")
     
     # Payment options
     accepted_tokens: Optional[List[str]] = None
     accepted_chains: Optional[List[str]] = None
+    
+    # Billing config
+    max_billing_cycles: Optional[int] = Field(None, ge=1, description="Max billing cycles (null = unlimited)")
     
     # Features (for display)
     features: Optional[List[str]] = None
@@ -812,6 +820,11 @@ class SubscriptionPlanResponse(BaseModel):
     
     # Trial
     trial_days: int
+    trial_type: str = "free"
+    trial_price: Optional[Decimal] = None
+    
+    # Setup fee
+    setup_fee: Decimal = Decimal("0")
     
     # Payment options
     accepted_tokens: List[str]
@@ -820,11 +833,17 @@ class SubscriptionPlanResponse(BaseModel):
     # Status
     is_active: bool
     
+    # Billing config
+    max_billing_cycles: Optional[int] = None
+    
     # Features
     features: Optional[List[str]] = None
     
     # Stats
     subscriber_count: int = 0
+    
+    # Public subscribe link
+    subscribe_url: Optional[str] = None  # Public URL for customers to subscribe
     
     created_at: datetime
     
@@ -839,8 +858,14 @@ class SubscriptionCreate(BaseModel):
     customer_name: Optional[str] = None
     customer_id: Optional[str] = Field(None, description="Your internal customer ID")
     
+    # Customer payment method
+    customer_wallet_address: Optional[str] = Field(None, description="Customer's wallet address for recurring charges")
+    customer_chain: Optional[str] = Field(None, description="Customer's preferred blockchain")
+    customer_token: Optional[str] = Field(None, description="Customer's preferred token")
+    
     # Trial override
     skip_trial: bool = Field(default=False, description="Skip plan's trial period")
+    custom_trial_days: Optional[int] = Field(None, ge=0, description="Override plan's trial days")
     
     # Metadata
     metadata: Optional[dict] = None
@@ -867,10 +892,24 @@ class RecurringSubscriptionResponse(BaseModel):
     # Trial
     trial_start: Optional[datetime] = None
     trial_end: Optional[datetime] = None
+    trial_type: Optional[str] = None  # free, reduced_price
+    is_in_trial: bool = False
+    trial_days_remaining: Optional[int] = None
+    
+    # Payment stats
+    total_payments_collected: int = 0
+    total_revenue: Optional[Decimal] = None
     
     # Next payment
     next_payment_at: Optional[datetime] = None
     next_payment_url: Optional[str] = None  # URL for customer to make next payment
+    next_payment_amount: Optional[Decimal] = None  # Amount for next payment
+    
+    # Customer payment method
+    customer_wallet_address: Optional[str] = None
+    customer_chain: Optional[str] = None
+    customer_token: Optional[str] = None
+    has_payment_method: bool = False
     
     # Cancellation
     cancel_at: Optional[datetime] = None
@@ -903,6 +942,13 @@ class RefundStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    QUEUED = "queued"
+    INSUFFICIENT_FUNDS = "insufficient_funds"
+
+
+class RefundSource(str, Enum):
+    PLATFORM_BALANCE = "platform_balance"
+    EXTERNAL_WALLET = "external_wallet"
 
 
 class RefundCreate(BaseModel):
@@ -911,6 +957,8 @@ class RefundCreate(BaseModel):
     amount: Optional[Decimal] = Field(None, description="Amount to refund (full refund if not specified)")
     refund_address: str = Field(..., description="Customer's wallet address for refund")
     reason: Optional[str] = None
+    force: bool = Field(default=False, description="Force refund even with insufficient platform balance (will use external wallet)")
+    queue_if_insufficient: bool = Field(default=False, description="Queue the refund to process when funds become available")
 
 
 class RefundResponse(BaseModel):
@@ -933,12 +981,33 @@ class RefundResponse(BaseModel):
     # Reason
     reason: Optional[str] = None
     
+    # Balance & settlement info
+    refund_source: Optional[str] = None
+    settlement_status: Optional[str] = None
+    merchant_balance_at_request: Optional[Decimal] = None
+    failure_reason: Optional[str] = None
+    queued_until: Optional[datetime] = None
+    
     created_at: datetime
     processed_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
+
+
+class RefundEligibility(BaseModel):
+    """Refund eligibility check response"""
+    eligible: bool
+    payment_session_id: str
+    max_refundable: Decimal
+    already_refunded: Decimal
+    merchant_balance: Decimal
+    sufficient_balance: bool
+    settlement_status: str  # in_platform, settled_external, partially_settled
+    message: str
+    can_queue: bool = False  # Whether queueing is available
+    can_force_external: bool = False  # Whether external wallet refund is possible
 
 
 class RefundList(BaseModel):
@@ -1096,6 +1165,10 @@ class EventType(str, Enum):
     SUBSCRIPTION_RENEWED = "subscription.renewed"
     SUBSCRIPTION_CANCELLED = "subscription.cancelled"
     SUBSCRIPTION_PAYMENT_FAILED = "subscription.payment_failed"
+    SUBSCRIPTION_TRIAL_STARTED = "subscription.trial_started"
+    SUBSCRIPTION_TRIAL_ENDING = "subscription.trial_ending"
+    SUBSCRIPTION_TRIAL_CONVERTED = "subscription.trial_converted"
+    SUBSCRIPTION_PAST_DUE = "subscription.past_due"
     REFUND_CREATED = "refund.created"
     REFUND_COMPLETED = "refund.completed"
     REFUND_FAILED = "refund.failed"

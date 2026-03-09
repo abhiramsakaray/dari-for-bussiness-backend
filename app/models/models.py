@@ -70,6 +70,8 @@ class RefundStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    QUEUED = "queued"  # Waiting for merchant to have sufficient funds
+    INSUFFICIENT_FUNDS = "insufficient_funds"  # Blocked due to low balance
 
 
 class WithdrawalStatus(str, enum.Enum):
@@ -498,6 +500,11 @@ class SubscriptionPlan(Base):
     
     # Trial
     trial_days = Column(Integer, default=0)
+    trial_type = Column(String(20), default="free")  # free, reduced_price
+    trial_price = Column(Numeric(precision=10, scale=2), nullable=True)  # Price during trial (for reduced_price type)
+    
+    # Setup fee (one-time charge at subscription start)
+    setup_fee = Column(Numeric(precision=10, scale=2), default=0)
     
     # Payment options
     accepted_tokens = Column(JSON, nullable=True)
@@ -505,6 +512,7 @@ class SubscriptionPlan(Base):
     
     # Configuration
     is_active = Column(Boolean, default=True, nullable=False)
+    max_billing_cycles = Column(Integer, nullable=True)  # null = unlimited
     
     # Metadata
     features = Column(JSON, nullable=True)  # ["Feature 1", "Feature 2"]
@@ -542,16 +550,29 @@ class Subscription(Base):
     # Trial
     trial_start = Column(DateTime, nullable=True)
     trial_end = Column(DateTime, nullable=True)
+    trial_reminder_sent = Column(Boolean, default=False)  # Reminder before trial ends
+    trial_converted_at = Column(DateTime, nullable=True)  # When trial converted to paid
     
     # Payment tracking
     last_payment_at = Column(DateTime, nullable=True)
     next_payment_at = Column(DateTime, nullable=True)
     failed_payment_count = Column(Integer, default=0)
+    total_payments_collected = Column(Integer, default=0)  # Total successful billing cycles
+    total_revenue = Column(Numeric(precision=14, scale=2), default=0)  # Total revenue from this subscription
+    
+    # Customer payment method
+    customer_wallet_address = Column(String(200), nullable=True)  # Customer's wallet for auto-billing
+    customer_chain = Column(String(20), nullable=True)  # Customer's preferred chain
+    customer_token = Column(String(10), nullable=True)  # Customer's preferred token
     
     # Cancellation
     cancel_at = Column(DateTime, nullable=True)  # Future cancellation date
     cancelled_at = Column(DateTime, nullable=True)  # When cancellation was requested
     cancel_reason = Column(String, nullable=True)
+    
+    # Billing config
+    max_payment_retries = Column(Integer, default=3)  # Max retries for failed payments
+    grace_period_days = Column(Integer, default=3)  # Days before marking past_due
     
     # Metadata
     subscription_metadata = Column(JSON, nullable=True)
@@ -620,6 +641,14 @@ class Refund(Base):
     
     # Reason
     reason = Column(Text, nullable=True)
+    
+    # Refund source & balance tracking
+    refund_source = Column(String(30), default="platform_balance")  # platform_balance, external_wallet
+    merchant_balance_at_request = Column(Numeric(precision=20, scale=8), nullable=True)  # Snapshot of balance when requested
+    settlement_status = Column(String(30), nullable=True)  # in_platform, settled_external, partially_settled
+    insufficient_funds_at = Column(DateTime, nullable=True)  # When insufficient funds was detected
+    queued_until = Column(DateTime, nullable=True)  # Auto-cancel queued refund after this date
+    failure_reason = Column(String(500), nullable=True)  # Detailed failure reason
     
     # Initiated by
     initiated_by = Column(UUID(as_uuid=True), nullable=True)  # MerchantUser ID

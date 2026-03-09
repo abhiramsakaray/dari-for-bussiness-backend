@@ -18,6 +18,8 @@ from app.routes import (
     withdrawals,
     # Promo codes
     promo,
+    # Subscription checkout (public)
+    subscription_checkout,
 )
 
 # Configure logging
@@ -107,6 +109,7 @@ app.include_router(onboarding.router)  # Merchant onboarding flow
 app.include_router(subscription_management.router)  # Subscription management
 app.include_router(billing.router)  # Billing endpoints (alias for subscription)
 app.include_router(withdrawals.router)  # Withdraw to external wallets
+app.include_router(subscription_checkout.router)  # Public subscription checkout
 
 # Promo code / coupon routers
 app.include_router(promo.merchant_promo_router)  # Merchant promo management
