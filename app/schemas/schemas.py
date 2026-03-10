@@ -1412,11 +1412,20 @@ class WithdrawalLimitInfo(BaseModel):
 
 # ============= BALANCE DASHBOARD SCHEMAS =============
 
+class ChainTokenBalance(BaseModel):
+    """Balance of one token on one chain (on-chain)"""
+    chain: str                          # stellar, ethereum, polygon, base, tron
+    token: str                          # USDC, USDT, PYUSD
+    balance: float                      # Raw token amount
+    wallet_address: str
+
+
 class CoinBalance(BaseModel):
     """Balance for a single token across all chains"""
     token: str                          # USDC, USDT, PYUSD
     balance_usdc: float                 # Amount in token (≈ USD)
     balance_local: Optional[LocalCurrencyAmount] = None
+    chain_balances: Optional[List[ChainTokenBalance]] = None  # Per-chain breakdown
 
 
 class WalletBalance(BaseModel):
@@ -1430,6 +1439,8 @@ class BalanceDashboardResponse(BaseModel):
     """
     Full balance dashboard: total balance, per-coin breakdown,
     wallet list — all in USDC + merchant's local currency.
+
+    Balances are fetched live from blockchain RPCs (not stored in DB).
     """
     # Totals
     total_balance_usdc: float
@@ -1453,6 +1464,9 @@ class BalanceDashboardResponse(BaseModel):
     # Net available (total - pending)
     net_available_usdc: float
     net_available_local: Optional[LocalCurrencyAmount] = None
+
+    # Data source
+    balance_source: str = "onchain"     # "onchain" or "database"
 
 
 # ============= PAYER DATA COLLECTION SCHEMAS =============

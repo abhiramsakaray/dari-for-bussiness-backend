@@ -123,6 +123,15 @@ class StellarPaymentListener:
             db.commit()
             db.refresh(session)
 
+            # Credit merchant balance
+            try:
+                from app.services.payment_utils import credit_merchant_balance
+                payment_token = session.token or "USDC"
+                credit_amount = session.amount_token or session.amount_usdc or "0"
+                credit_merchant_balance(db, session.merchant_id, payment_token, credit_amount)
+            except Exception as be:
+                logger.error(f"Error crediting balance for {memo}: {be}")
+
             # Update merchant subscription volume (full original amount)
             try:
                 from app.services.payment_utils import update_merchant_volume

@@ -99,22 +99,71 @@ async def get_withdrawal_balance(
     db: Session = Depends(get_db),
 ):
     """
-    Get available balances for withdrawal.
-    
-    Shows current balance, pending withdrawal amounts, and net available for each token.
-    All amounts returned in both USDC and merchant's local currency.
+    Get available balances for withdrawal (live on-chain).
+
+    Queries blockchain RPCs directly for each active merchant wallet,
+    then subtracts pending withdrawals to give the net available amount.
+    Falls back to DB-stored values if all RPCs fail.
     """
+    import asyncio
+    from app.services.onchain_balance import (
+        get_evm_balances, get_stellar_balances, get_tron_balances, _with_chain_timeout,
+    )
+
     merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
     currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
 
+    # ── Fetch on-chain balances ──
+    wallets_db = db.query(MerchantWallet).filter(
+        MerchantWallet.merchant_id == merchant.id,
+        MerchantWallet.is_active == True,
+    ).all()
+
+    tasks = []
+    for w in wallets_db:
+        chain = w.chain.value if hasattr(w.chain, "value") else str(w.chain)
+        addr = w.wallet_address
+        if chain == "stellar":
+            tasks.append(_with_chain_timeout(get_stellar_balances(addr), chain, addr))
+        elif chain == "tron":
+            tasks.append(_with_chain_timeout(get_tron_balances(addr), chain, addr))
+        elif chain in ("ethereum", "polygon", "base"):
+            tasks.append(_with_chain_timeout(get_evm_balances(chain, addr), chain, addr))
+
+    # Aggregate token totals from on-chain results
+    from collections import defaultdict
+    token_totals: dict = defaultdict(float)
+    # Track which tokens we got at least one successful (non-timeout) reading for
+    tokens_seen: set = set()
+
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(f"On-chain balance error (withdrawal): {result}")
+                continue
+            # Empty list = timeout/skip; non-empty = real data (even if balance is 0)
+            for tb in result:
+                token_totals[tb.token.upper()] += float(tb.balance)
+                tokens_seen.add(tb.token.upper())
+
+    # Fall back to DB for any token where no chain returned data
+    # (e.g. Stellar timed out → USDC missing from tokens_seen)
+    for token in SUPPORTED_TOKENS:
+        if token not in tokens_seen:
+            db_val = float(_get_merchant_balance(merchant, token))
+            if db_val > 0:
+                logger.info(f"On-chain missing {token} data — using DB value {db_val}")
+                token_totals[token] = db_val
+
     balances = []
     total_usd = 0.0
 
     for token in SUPPORTED_TOKENS:
-        available = float(_get_merchant_balance(merchant, token))
+        available = token_totals.get(token, 0.0)
         pending = float(_get_pending_amount(db, merchant.id, token))
         net = max(available - pending, 0.0)
         total_usd += net

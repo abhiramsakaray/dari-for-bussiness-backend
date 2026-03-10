@@ -82,7 +82,8 @@ async def checkout_page(
     is_expired = datetime.utcnow() > expiry_time
     
     # If expired but status not yet marked, mark it now
-    if is_expired and session.status not in (PaymentStatus.EXPIRED, PaymentStatus.PAID):
+    # Never overwrite PENDING (payment detected, confirming) or PAID
+    if is_expired and session.status not in (PaymentStatus.EXPIRED, PaymentStatus.PAID, PaymentStatus.PENDING):
         session.status = PaymentStatus.EXPIRED
         db.commit()
     
@@ -248,6 +249,17 @@ async def checkout_page(
         <html><body style="font-family:Inter,Arial;text-align:center;padding:50px;background:#0a0e27;color:#fff">
         <h1>⚠️ Configuration Error</h1><p>Merchant wallet not configured. Please add a wallet in your dashboard.</p>
         </body></html>""", status_code=500)
+
+    # ── Persist selected chain/token/wallet so the blockchain listener can match ──
+    if session.status in (PaymentStatus.CREATED,) and (
+        session.chain != current_chain
+        or session.token != current_token
+        or session.merchant_wallet != payment_address
+    ):
+        session.chain = current_chain
+        session.token = current_token
+        session.merchant_wallet = payment_address
+        db.commit()
 
     # ── Token amount ──
     amount_usdc = session.amount_usdc or '0'

@@ -200,9 +200,8 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info("")
     logger.info("⚠️  IMPORTANT: Start blockchain listeners separately:")
-    logger.info("   python -m app.services.stellar_listener")
-    logger.info("   python -m app.services.blockchains.evm_listener")
-    logger.info("   python -m app.services.blockchains.tron_listener")
+    logger.info("   python run_listeners.py                # All enabled chains")
+    logger.info("   python run_listeners.py polygon tron   # Specific chains only")
     logger.info("")
     logger.info("=" * 60)
 

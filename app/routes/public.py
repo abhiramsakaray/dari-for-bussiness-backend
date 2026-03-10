@@ -40,6 +40,8 @@ async def verify_payment_session(
         "created_at": session.created_at,
         "coupon_code": session.coupon_code,
         "discount_amount": float(session.discount_amount) if session.discount_amount else None,
+        "tx_hash": session.tx_hash,
+        "confirmations": session.confirmations,
     }
 
 

@@ -376,6 +376,15 @@ async def complete_coupon_payment(
     session.tx_hash = f"coupon:{result['coupon_code']}"
     db.commit()
 
+    # Credit merchant balance (coupon pays full amount, credit as USDC equivalent)
+    try:
+        from app.services.payment_utils import credit_merchant_balance
+        payment_token = session.token or "USDC"
+        credit_amount = session.amount_token or session.amount_usdc or "0"
+        credit_merchant_balance(db, session.merchant_id, payment_token, credit_amount)
+    except Exception as be:
+        logger.error(f"Error crediting balance for coupon payment {session_id}: {be}")
+
     # Update merchant subscription volume (full original amount counts)
     try:
         from app.services.payment_utils import update_merchant_volume

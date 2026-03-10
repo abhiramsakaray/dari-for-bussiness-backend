@@ -84,18 +84,23 @@ async def get_balance_dashboard(
     db: Session = Depends(get_db),
 ):
     """
-    Get a complete balance dashboard.
+    Get a complete balance dashboard with **live on-chain balances**.
+
+    Balances are fetched directly from blockchain RPCs (Stellar Horizon,
+    EVM eth_call, TronGrid). Falls back to DB-stored balances if all
+    RPC calls fail.
 
     Returns:
     - **Total balance** in USDC and merchant's local currency
     - **Per-coin breakdown** (USDC, USDT, PYUSD) with local equivalents
+    - **Per-chain detail** for each coin
     - **All wallets** with chain and address
     - **Pending withdrawals** total
     - **Net available** (total minus pending)
-
-    The local currency is determined automatically from the merchant's country
-    (set during onboarding). Exchange rates are fetched in real-time.
     """
+    from app.services.onchain_balance import get_evm_balances, get_stellar_balances, get_tron_balances, _with_chain_timeout
+    import asyncio
+
     merchant_uuid = uuid.UUID(current_user["id"]) if isinstance(current_user["id"], str) else current_user["id"]
     merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
     if not merchant:
@@ -103,18 +108,88 @@ async def get_balance_dashboard(
 
     currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
 
+    # ── Wallet list ──
+    wallets_db = db.query(MerchantWallet).filter(
+        MerchantWallet.merchant_id == merchant.id,
+    ).all()
+    wallet_items = [
+        WalletBalance(
+            chain=w.chain.value if hasattr(w.chain, 'value') else str(w.chain),
+            wallet_address=w.wallet_address,
+            is_active=w.is_active,
+        )
+        for w in wallets_db
+    ]
+
+    # ── Fetch on-chain balances ──
+    wallet_dicts = [
+        {"chain": wi.chain, "wallet_address": wi.wallet_address, "is_active": wi.is_active}
+        for wi in wallet_items
+    ]
+    balance_source = "onchain"
+
+    try:
+        # Gather per-chain balances in parallel
+        all_chain_balances = []  # List[TokenBalance]
+        tasks = []
+        for wd in wallet_dicts:
+            if not wd["is_active"]:
+                continue
+            chain = wd["chain"].lower()
+            addr = wd["wallet_address"]
+            if chain == "stellar":
+                tasks.append(_with_chain_timeout(get_stellar_balances(addr), chain, addr))
+            elif chain == "tron":
+                tasks.append(_with_chain_timeout(get_tron_balances(addr), chain, addr))
+            elif chain in ("ethereum", "polygon", "base"):
+                tasks.append(_with_chain_timeout(get_evm_balances(chain, addr), chain, addr))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.warning(f"Balance fetch error: {result}")
+                    continue
+                all_chain_balances.extend(result)
+
+        # Aggregate by token + build chain-level detail
+        from collections import defaultdict
+        token_totals = defaultdict(float)
+        chain_detail = defaultdict(list)  # token -> [ChainTokenBalance, ...]
+        from app.schemas import ChainTokenBalance
+
+        for tb in all_chain_balances:
+            token_upper = tb.token.upper()
+            bal_float = float(tb.balance)
+            token_totals[token_upper] += bal_float
+            chain_detail[token_upper].append(ChainTokenBalance(
+                chain=tb.chain,
+                token=tb.token,
+                balance=bal_float,
+                wallet_address=tb.wallet_address,
+            ))
+
+    except Exception as e:
+        logger.error(f"On-chain balance fetch failed, falling back to DB: {e}")
+        balance_source = "database"
+        token_totals = {}
+        chain_detail = {}
+        for token in SUPPORTED_TOKENS:
+            col = BALANCE_COLUMNS[token]
+            token_totals[token] = float(getattr(merchant, col, 0) or 0)
+
     # ── Per-coin balances ──
     coins = []
     total_usdc = 0.0
     for token in SUPPORTED_TOKENS:
-        col = BALANCE_COLUMNS[token]
-        raw = float(getattr(merchant, col, 0) or 0)
+        raw = token_totals.get(token, 0.0)
         total_usdc += raw
         coin_local = await build_local_amount(raw, currency_code, currency_symbol)
         coins.append(CoinBalance(
             token=token,
             balance_usdc=raw,
             balance_local=LocalCurrencyAmount(**coin_local),
+            chain_balances=chain_detail.get(token),
         ))
 
     # ── Pending withdrawals ──
@@ -132,19 +207,6 @@ async def get_balance_dashboard(
     pending_local = await build_local_amount(pending_usdc, currency_code, currency_symbol)
     net_local = await build_local_amount(net_usdc, currency_code, currency_symbol)
 
-    # ── Wallet list ──
-    wallets_db = db.query(MerchantWallet).filter(
-        MerchantWallet.merchant_id == merchant.id,
-    ).all()
-    wallet_items = [
-        WalletBalance(
-            chain=w.chain.value if hasattr(w.chain, 'value') else str(w.chain),
-            wallet_address=w.wallet_address,
-            is_active=w.is_active,
-        )
-        for w in wallets_db
-    ]
-
     return BalanceDashboardResponse(
         total_balance_usdc=total_usdc,
         total_balance_local=LocalCurrencyAmount(**total_local),
@@ -157,6 +219,7 @@ async def get_balance_dashboard(
         pending_withdrawals_local=LocalCurrencyAmount(**pending_local),
         net_available_usdc=net_usdc,
         net_available_local=LocalCurrencyAmount(**net_local),
+        balance_source=balance_source,
     )
 
 

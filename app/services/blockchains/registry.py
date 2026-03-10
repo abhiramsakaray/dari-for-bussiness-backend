@@ -2,6 +2,7 @@
 Blockchain Registry - Manages all blockchain listeners
 
 Central registry for managing blockchain listeners and routing payments.
+Wires DB-backed payment callbacks for each chain.
 """
 
 import asyncio
@@ -20,48 +21,48 @@ _registry_instance: Optional["BlockchainRegistry"] = None
 class BlockchainRegistry:
     """
     Central registry for all blockchain listeners.
-    
+
     Manages lifecycle of listeners and routes payments to handlers.
     """
-    
+
     def __init__(self):
         self._listeners: Dict[str, BlockchainListener] = {}
         self._payment_handlers: List[Callable[[PaymentInfo], Any]] = []
         self._is_running = False
-        
+
     def register_listener(self, listener: BlockchainListener):
         """Register a blockchain listener"""
         chain = listener.chain
         if chain in self._listeners:
             logger.warning(f"Replacing existing listener for {chain}")
-        
+
         self._listeners[chain] = listener
         listener.set_payment_callback(self._on_payment_detected)
         listener.set_error_callback(self._on_listener_error)
-        logger.info(f"✅ Registered listener for {chain}")
-        
+        logger.info(f"Registered listener for {chain}")
+
     def unregister_listener(self, chain: str):
         """Unregister a blockchain listener"""
         if chain in self._listeners:
             del self._listeners[chain]
             logger.info(f"Unregistered listener for {chain}")
-            
+
     def get_listener(self, chain: str) -> Optional[BlockchainListener]:
         """Get listener for a specific chain"""
         return self._listeners.get(chain)
-    
+
     def get_all_chains(self) -> List[str]:
         """Get all registered chain identifiers"""
         return list(self._listeners.keys())
-    
+
     def add_payment_handler(self, handler: Callable[[PaymentInfo], Any]):
         """Add a payment handler callback"""
         self._payment_handlers.append(handler)
-        
+
     async def _on_payment_detected(self, payment: PaymentInfo):
-        """Called when any listener detects a payment"""
-        logger.info(f"💰 Payment detected on {payment.chain}: {payment.amount} {payment.token_symbol}")
-        
+        """Called when any listener detects a confirmed payment"""
+        logger.info(f"Payment detected on {payment.chain}: {payment.amount} {payment.token_symbol}")
+
         for handler in self._payment_handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -70,45 +71,45 @@ class BlockchainRegistry:
                     handler(payment)
             except Exception as e:
                 logger.error(f"Error in payment handler: {e}")
-                
+
     async def _on_listener_error(self, error: Exception):
         """Called when a listener encounters an error"""
         logger.error(f"Listener error: {error}")
-    
+
     async def start_all(self):
         """Start all registered listeners"""
         if self._is_running:
             logger.warning("Registry already running")
             return
-            
+
         self._is_running = True
-        logger.info(f"🚀 Starting {len(self._listeners)} blockchain listeners...")
-        
+        logger.info(f"Starting {len(self._listeners)} blockchain listeners...")
+
         tasks = []
         for chain, listener in self._listeners.items():
             tasks.append(self._start_listener(chain, listener))
-            
+
         await asyncio.gather(*tasks, return_exceptions=True)
-        
+
     async def _start_listener(self, chain: str, listener: BlockchainListener):
         """Start a single listener with error handling"""
         try:
             await listener.start()
         except Exception as e:
             logger.error(f"Failed to start {chain} listener: {e}")
-            
+
     async def stop_all(self):
         """Stop all registered listeners"""
         self._is_running = False
         logger.info("Stopping all blockchain listeners...")
-        
+
         tasks = []
         for chain, listener in self._listeners.items():
             tasks.append(listener.stop())
-            
+
         await asyncio.gather(*tasks, return_exceptions=True)
         logger.info("All listeners stopped")
-        
+
     async def verify_payment(
         self,
         chain: str,
@@ -118,25 +119,12 @@ class BlockchainRegistry:
         expected_token: str,
         memo: Optional[str] = None
     ) -> bool:
-        """
-        Verify a payment on a specific chain.
-        
-        Args:
-            chain: Blockchain network
-            tx_hash: Transaction hash
-            expected_to: Expected destination address  
-            expected_amount: Expected amount
-            expected_token: Expected token symbol
-            memo: Expected memo (for Stellar)
-            
-        Returns:
-            True if payment is valid
-        """
+        """Verify a payment on a specific chain."""
         listener = self.get_listener(chain)
         if not listener:
             logger.error(f"No listener for chain: {chain}")
             return False
-            
+
         return await listener.verify_payment(
             tx_hash=tx_hash,
             expected_to=expected_to,
@@ -144,7 +132,7 @@ class BlockchainRegistry:
             expected_token=expected_token,
             memo=memo
         )
-        
+
     def get_status(self) -> Dict[str, Dict[str, Any]]:
         """Get status of all listeners"""
         status = {}
@@ -170,37 +158,50 @@ def get_registry() -> BlockchainRegistry:
     return _registry_instance
 
 
-def create_registry_with_listeners(config: Dict[str, Any]) -> BlockchainRegistry:
+def create_registry_with_listeners(config: Dict[str, Any] = None) -> BlockchainRegistry:
     """
-    Create a registry with listeners based on configuration.
-    
-    Args:
-        config: Configuration dictionary with chain settings
-        
-    Returns:
-        Configured BlockchainRegistry
+    Create a registry with listeners based on enabled chains in settings.
+    Wires DB-backed payment callbacks (process_*_payment) for each chain.
     """
-    from .stellar_listener import create_stellar_listener
-    from .evm_listener import create_evm_listener
-    from .tron_listener import create_tron_listener
-    
+    from app.core.config import settings
+    from .stellar_listener import create_stellar_listener, process_stellar_payment
+    from .evm_listener import create_evm_listener, process_evm_payment
+    from .tron_listener import create_tron_listener, process_tron_payment
+
+    config = config or {}
     registry = get_registry()
-    
-    # Create Stellar listener
-    if config.get("stellar", {}).get("enabled", True):
-        stellar_listener = create_stellar_listener(config.get("stellar", {}))
-        registry.register_listener(stellar_listener)
-    
-    # Create EVM listeners (Ethereum, Polygon, Base)
+
+    # Stellar
+    if config.get("stellar", {}).get("enabled", settings.STELLAR_ENABLED):
+        try:
+            stellar_listener = create_stellar_listener(config.get("stellar", {}))
+            stellar_listener.set_payment_callback(process_stellar_payment)
+            registry.register_listener(stellar_listener)
+            logger.info("✅ Stellar listener registered")
+        except Exception as e:
+            logger.error(f"Failed to create Stellar listener: {e}")
+
+    # EVM chains (Ethereum, Polygon, Base)
     for chain in ["ethereum", "polygon", "base"]:
-        chain_config = config.get(chain, {})
-        if chain_config.get("enabled", False):
-            evm_listener = create_evm_listener(chain, chain_config)
-            registry.register_listener(evm_listener)
-    
-    # Create Tron listener
-    if config.get("tron", {}).get("enabled", False):
-        tron_listener = create_tron_listener(config.get("tron", {}))
-        registry.register_listener(tron_listener)
-    
+        chain_upper = chain.upper()
+        enabled = config.get(chain, {}).get("enabled", getattr(settings, f"{chain_upper}_ENABLED", False))
+        if enabled:
+            try:
+                evm_listener = create_evm_listener(chain, config.get(chain, {}))
+                evm_listener.set_payment_callback(process_evm_payment)
+                registry.register_listener(evm_listener)
+                logger.info(f"✅ {chain.title()} listener registered")
+            except Exception as e:
+                logger.error(f"Failed to create {chain} listener: {e}")
+
+    # Tron
+    if config.get("tron", {}).get("enabled", settings.TRON_ENABLED):
+        try:
+            tron_listener = create_tron_listener(config.get("tron", {}))
+            tron_listener.set_payment_callback(process_tron_payment)
+            registry.register_listener(tron_listener)
+            logger.info("✅ Tron listener registered")
+        except Exception as e:
+            logger.error(f"Failed to create Tron listener: {e}")
+
     return registry

@@ -51,6 +51,7 @@ from app.schemas.schemas import (
     LocalCurrencyAmount,
     # Balance dashboard schemas
     CoinBalance,
+    ChainTokenBalance,
     WalletBalance,
     BalanceDashboardResponse,
     # Payer data & tokenization schemas
@@ -131,6 +132,7 @@ __all__ = [
     "LocalCurrencyAmount",
     # Balance dashboard schemas
     "CoinBalance",
+    "ChainTokenBalance",
     "WalletBalance",
     "BalanceDashboardResponse",
     # Payer data & tokenization schemas

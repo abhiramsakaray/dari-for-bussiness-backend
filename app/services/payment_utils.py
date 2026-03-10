@@ -53,3 +53,43 @@ def update_merchant_volume(db, merchant_id, amount_fiat: Decimal) -> None:
         logger.info(f"Updated volume for merchant {merchant_id}: +{amount_fiat} → {sub.current_volume}")
     else:
         logger.warning(f"No subscription found for merchant {merchant_id}, skipping volume update")
+
+
+# Mapping from token symbol to Merchant balance column name
+BALANCE_COLUMNS = {
+    "USDC": "balance_usdc",
+    "USDT": "balance_usdt",
+    "PYUSD": "balance_pyusd",
+}
+
+
+def credit_merchant_balance(db, merchant_id, token: str, amount) -> None:
+    """
+    Credit a merchant's balance after a confirmed payment.
+
+    Args:
+        db: SQLAlchemy session
+        merchant_id: Merchant UUID
+        token: Token symbol (USDC, USDT, PYUSD)
+        amount: Amount to credit (string, float, or Decimal)
+    """
+    from app.models.models import Merchant
+
+    col_name = BALANCE_COLUMNS.get(token.upper())
+    if not col_name:
+        logger.warning(f"Unknown token '{token}' – cannot credit merchant {merchant_id}")
+        return
+
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    if not merchant:
+        logger.warning(f"Merchant {merchant_id} not found – cannot credit balance")
+        return
+
+    current = getattr(merchant, col_name, None) or Decimal("0")
+    credit = Decimal(str(amount))
+    setattr(merchant, col_name, current + credit)
+    db.commit()
+    logger.info(
+        f"💰 Credited {credit} {token} to merchant {merchant_id} "
+        f"(new {col_name}={current + credit})"
+    )
