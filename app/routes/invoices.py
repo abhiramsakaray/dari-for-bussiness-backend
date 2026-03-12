@@ -79,7 +79,11 @@ async def create_invoice(
     )
     
     # Process line items and calculate totals
-    line_items_data = [item.model_dump() for item in invoice_data.line_items]
+    line_items_data = [
+        {k: float(v) if hasattr(v, '__float__') and not isinstance(v, (str, bool)) else v
+         for k, v in item.model_dump().items()}
+        for item in invoice_data.line_items
+    ]
     
     if invoice_data.subtotal is None:
         subtotal, total = calculate_totals(
@@ -88,7 +92,11 @@ async def create_invoice(
             invoice_data.discount
         )
         # Update line items with calculated totals
-        line_items_data = [item.model_dump() for item in invoice_data.line_items]
+        line_items_data = [
+            {k: float(v) if hasattr(v, '__float__') and not isinstance(v, (str, bool)) else v
+             for k, v in item.model_dump().items()}
+            for item in invoice_data.line_items
+        ]
     else:
         subtotal = invoice_data.subtotal
         total = subtotal + invoice_data.tax - invoice_data.discount
@@ -230,7 +238,11 @@ async def update_invoice(
             update_fields.get("tax", invoice.tax),
             update_fields.get("discount", invoice.discount)
         )
-        update_fields["line_items"] = [item.model_dump() for item in line_items]
+        update_fields["line_items"] = [
+            {k: float(v) if hasattr(v, '__float__') and not isinstance(v, (str, bool)) else v
+             for k, v in item.model_dump().items()}
+            for item in line_items
+        ]
         update_fields["subtotal"] = subtotal
         update_fields["total"] = total
     elif "tax" in update_fields or "discount" in update_fields:

@@ -3,14 +3,21 @@ On-Chain Balance Service
 
 Fetches real token balances from blockchain RPCs for merchant wallets.
 Supports Stellar, EVM chains (Ethereum, Polygon, Base), and Tron.
-Results are cached briefly to avoid spamming RPCs on every dashboard load.
+
+Improvements:
+  - Multiple fallback RPC endpoints per chain (tries next on failure)
+  - In-memory cache (60s TTL) to avoid spamming RPCs on every dashboard load
+  - Reusable httpx.AsyncClient (connection pooling)
+  - Shorter timeouts (4s per request, 6s per chain) for fast dashboard loads
+  - Graceful degradation: returns cached/zero balances on failure
 """
 
 import asyncio
 import logging
+import time
 import httpx
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from app.core.config import settings
@@ -20,11 +27,10 @@ logger = logging.getLogger(__name__)
 # Standard ERC-20 balanceOf(address) selector
 ERC20_BALANCE_OF = "0x70a08231"
 
-# Hard per-request HTTP timeout (seconds) — keeps slow RPCs from stalling everything
-HTTP_TIMEOUT = 8
-
-# Per-chain asyncio timeout — even if HTTP hangs, we give up after this many seconds
-CHAIN_TIMEOUT = 10
+# Timeouts — kept short so dashboard loads fast even when RPCs are down
+HTTP_TIMEOUT = 4       # seconds per HTTP request
+CHAIN_TIMEOUT = 6      # seconds per chain (total)
+CACHE_TTL = 60         # seconds to cache balances
 
 
 @dataclass
@@ -36,11 +42,100 @@ class TokenBalance:
     wallet_address: str
 
 
+# ─────────────────────────  In-Memory Cache  ──────────────────────────────
+
+_balance_cache: Dict[str, Tuple[float, List[TokenBalance]]] = {}
+
+
+def _cache_key(chain: str, wallet: str) -> str:
+    return f"{chain}:{wallet.lower()}"
+
+
+def _get_cached(chain: str, wallet: str) -> Optional[List[TokenBalance]]:
+    key = _cache_key(chain, wallet)
+    entry = _balance_cache.get(key)
+    if entry and (time.time() - entry[0]) < CACHE_TTL:
+        return entry[1]
+    return None
+
+
+def _set_cached(chain: str, wallet: str, balances: List[TokenBalance]):
+    _balance_cache[_cache_key(chain, wallet)] = (time.time(), balances)
+
+
+# ─────────────────────────  Fallback RPC Endpoints  ──────────────────────
+
+# Multiple free public RPCs per chain — if one fails, try the next
+EVM_FALLBACK_RPCS = {
+    "ethereum": {
+        "testnet": [
+            "https://rpc.sepolia.org",
+            "https://ethereum-sepolia-rpc.publicnode.com",
+            "https://rpc2.sepolia.org",
+        ],
+        "mainnet": [
+            "https://eth.llamarpc.com",
+            "https://ethereum-rpc.publicnode.com",
+            "https://rpc.ankr.com/eth",
+            "https://1rpc.io/eth",
+        ],
+    },
+    "polygon": {
+        "testnet": [
+            "https://rpc-amoy.polygon.technology",
+            "https://polygon-amoy-bor-rpc.publicnode.com",
+        ],
+        "mainnet": [
+            "https://polygon-rpc.com",
+            "https://polygon-bor-rpc.publicnode.com",
+            "https://rpc.ankr.com/polygon",
+            "https://1rpc.io/matic",
+        ],
+    },
+    "base": {
+        "testnet": [
+            "https://sepolia.base.org",
+            "https://base-sepolia-rpc.publicnode.com",
+        ],
+        "mainnet": [
+            "https://mainnet.base.org",
+            "https://base-rpc.publicnode.com",
+            "https://1rpc.io/base",
+        ],
+    },
+}
+
+
+def _get_rpc_urls(chain: str) -> List[str]:
+    """Get ordered list of RPC URLs for a chain (configured first, then fallbacks)."""
+    net = "mainnet" if settings.USE_MAINNET else "testnet"
+    
+    # Start with the configured RPC URL
+    configured_url = ""
+    if chain == "ethereum":
+        configured_url = settings.ETHEREUM_RPC_URL
+    elif chain == "polygon":
+        configured_url = settings.POLYGON_RPC_URL
+    elif chain == "base":
+        configured_url = settings.BASE_RPC_URL
+    
+    urls = []
+    if configured_url:
+        urls.append(configured_url)
+    
+    # Add fallbacks (skip duplicates)
+    fallbacks = EVM_FALLBACK_RPCS.get(chain, {}).get(net, [])
+    for fb in fallbacks:
+        if fb not in urls:
+            urls.append(fb)
+    
+    return urls
+
+
 def _get_evm_chain_config(chain: str) -> Optional[dict]:
-    """Return RPC URL and token contract addresses for an EVM chain."""
+    """Return RPC URLs and token contract addresses for an EVM chain."""
     configs = {
         "ethereum": {
-            "rpc_url": settings.ETHEREUM_RPC_URL,
             "enabled": settings.ETHEREUM_ENABLED,
             "tokens": {
                 "USDC": {"address": settings.ETHEREUM_USDC_ADDRESS, "decimals": 6},
@@ -49,7 +144,6 @@ def _get_evm_chain_config(chain: str) -> Optional[dict]:
             },
         },
         "polygon": {
-            "rpc_url": settings.POLYGON_RPC_URL,
             "enabled": settings.POLYGON_ENABLED,
             "tokens": {
                 "USDC": {"address": settings.POLYGON_USDC_ADDRESS, "decimals": 6},
@@ -57,7 +151,6 @@ def _get_evm_chain_config(chain: str) -> Optional[dict]:
             },
         },
         "base": {
-            "rpc_url": settings.BASE_RPC_URL,
             "enabled": settings.BASE_ENABLED,
             "tokens": {
                 "USDC": {"address": settings.BASE_USDC_ADDRESS, "decimals": 6},
@@ -65,7 +158,7 @@ def _get_evm_chain_config(chain: str) -> Optional[dict]:
         },
     }
     cfg = configs.get(chain.lower())
-    if cfg and cfg["enabled"] and cfg["rpc_url"]:
+    if cfg and cfg["enabled"]:
         return cfg
     return None
 
@@ -73,13 +166,13 @@ def _get_evm_chain_config(chain: str) -> Optional[dict]:
 # ─────────────────────────  EVM (Ethereum / Polygon / Base)  ──────────────
 
 async def _fetch_erc20_balance(
+    client: httpx.AsyncClient,
     rpc_url: str,
     token_address: str,
     wallet_address: str,
     decimals: int,
 ) -> Decimal:
     """Call balanceOf via eth_call and decode the uint256 result."""
-    # ABI-encode balanceOf(address): pad address to 32 bytes
     padded = wallet_address.lower().replace("0x", "").zfill(64)
     data = f"{ERC20_BALANCE_OF}{padded}"
 
@@ -90,92 +183,163 @@ async def _fetch_erc20_balance(
         "params": [{"to": token_address, "data": data}, "latest"],
     }
 
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        resp = await client.post(rpc_url, json=payload)
-        resp.raise_for_status()
-        body = resp.json()
+    resp = await client.post(rpc_url, json=payload)
+    resp.raise_for_status()
+    body = resp.json()
 
     result = body.get("result", "0x0")
     raw = int(result, 16) if result and result != "0x" else 0
     return Decimal(raw) / Decimal(10 ** decimals)
 
 
+async def _fetch_erc20_balance_with_fallback(
+    client: httpx.AsyncClient,
+    chain: str,
+    token_address: str,
+    wallet_address: str,
+    decimals: int,
+) -> Decimal:
+    """Try fetching balance from multiple RPC endpoints until one works."""
+    rpc_urls = _get_rpc_urls(chain)
+    
+    for rpc_url in rpc_urls:
+        try:
+            return await _fetch_erc20_balance(
+                client, rpc_url, token_address, wallet_address, decimals
+            )
+        except Exception:
+            continue  # Try next RPC
+    
+    # All RPCs failed
+    raise ConnectionError(f"All {len(rpc_urls)} RPCs failed for {chain}")
+
+
 async def get_evm_balances(chain: str, wallet_address: str) -> List[TokenBalance]:
     """Fetch all token balances on a single EVM chain for a wallet."""
+    # Check cache first
+    cached = _get_cached(chain, wallet_address)
+    if cached is not None:
+        return cached
+
     cfg = _get_evm_chain_config(chain)
     if not cfg:
         return []
 
     results: List[TokenBalance] = []
-    for symbol, token_cfg in cfg["tokens"].items():
-        if not token_cfg["address"]:
-            continue
-        try:
-            bal = await _fetch_erc20_balance(
-                cfg["rpc_url"],
-                token_cfg["address"],
-                wallet_address,
-                token_cfg["decimals"],
-            )
-            results.append(TokenBalance(
-                chain=chain,
-                token=symbol,
-                balance=bal,
-                wallet_address=wallet_address,
-            ))
-        except Exception as e:
-            logger.warning(f"Failed to fetch {symbol} balance on {chain} for {wallet_address}: {e}")
-            results.append(TokenBalance(chain=chain, token=symbol, balance=Decimal(0), wallet_address=wallet_address))
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        for symbol, token_cfg in cfg["tokens"].items():
+            if not token_cfg["address"]:
+                continue
+            try:
+                bal = await _fetch_erc20_balance_with_fallback(
+                    client,
+                    chain,
+                    token_cfg["address"],
+                    wallet_address,
+                    token_cfg["decimals"],
+                )
+                results.append(TokenBalance(
+                    chain=chain, token=symbol, balance=bal,
+                    wallet_address=wallet_address,
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to fetch {symbol} on {chain} for {wallet_address[:10]}...: {e}")
+                results.append(TokenBalance(
+                    chain=chain, token=symbol, balance=Decimal(0),
+                    wallet_address=wallet_address,
+                ))
+
+    # Cache the results
+    _set_cached(chain, wallet_address, results)
     return results
 
 
 # ─────────────────────────  Stellar  ──────────────────────────────────────
 
+STELLAR_FALLBACK_HORIZONS = {
+    "testnet": [
+        "https://horizon-testnet.stellar.org",
+    ],
+    "mainnet": [
+        "https://horizon.stellar.org",
+    ],
+}
+
+
 async def get_stellar_balances(wallet_address: str) -> List[TokenBalance]:
     """Fetch USDC (and native XLM) balances from Horizon."""
-    horizon = settings.STELLAR_HORIZON_URL
-    if not horizon:
-        return []
+    # Check cache first
+    cached = _get_cached("stellar", wallet_address)
+    if cached is not None:
+        return cached
 
-    url = f"{horizon}/accounts/{wallet_address}"
+    net = "mainnet" if settings.USE_MAINNET else "testnet"
+    horizons = []
+    if settings.STELLAR_HORIZON_URL:
+        horizons.append(settings.STELLAR_HORIZON_URL)
+    horizons.extend(STELLAR_FALLBACK_HORIZONS.get(net, []))
+
     results: List[TokenBalance] = []
 
-    try:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-            resp = await client.get(url)
-            # 404 = unfunded account, 400 = invalid/test address — both mean zero balance
-            if resp.status_code in (400, 404):
-                return [TokenBalance(chain="stellar", token="USDC", balance=Decimal(0), wallet_address=wallet_address)]
-            resp.raise_for_status()
-            account = resp.json()
+    for horizon in horizons:
+        try:
+            url = f"{horizon}/accounts/{wallet_address}"
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+                resp = await client.get(url)
+                if resp.status_code in (400, 404):
+                    results = [TokenBalance(chain="stellar", token="USDC", balance=Decimal(0), wallet_address=wallet_address)]
+                    break
+                resp.raise_for_status()
+                account = resp.json()
 
-        for bal_entry in account.get("balances", []):
-            asset_type = bal_entry.get("asset_type", "")
-            if asset_type == "credit_alphanum4" and bal_entry.get("asset_code") == "USDC":
-                results.append(TokenBalance(
-                    chain="stellar",
-                    token="USDC",
-                    balance=Decimal(bal_entry["balance"]),
-                    wallet_address=wallet_address,
-                ))
-
-    except Exception as e:
-        logger.warning(f"Failed to fetch Stellar balances for {wallet_address}: {e}")
-        results.append(TokenBalance(chain="stellar", token="USDC", balance=Decimal(0), wallet_address=wallet_address))
+            for bal_entry in account.get("balances", []):
+                asset_type = bal_entry.get("asset_type", "")
+                if asset_type == "credit_alphanum4" and bal_entry.get("asset_code") == "USDC":
+                    results.append(TokenBalance(
+                        chain="stellar", token="USDC",
+                        balance=Decimal(bal_entry["balance"]),
+                        wallet_address=wallet_address,
+                    ))
+            break  # Success — stop trying more horizons
+        except Exception as e:
+            logger.warning(f"Stellar Horizon {horizon} failed for {wallet_address[:10]}...: {e}")
+            continue
 
     if not any(tb.token == "USDC" for tb in results):
         results.append(TokenBalance(chain="stellar", token="USDC", balance=Decimal(0), wallet_address=wallet_address))
 
+    _set_cached("stellar", wallet_address, results)
     return results
 
 
 # ─────────────────────────  Tron  ─────────────────────────────────────────
 
+TRON_FALLBACK_APIS = {
+    "testnet": [
+        "https://nile.trongrid.io",
+    ],
+    "mainnet": [
+        "https://api.trongrid.io",
+        "https://api.tronstack.io",
+    ],
+}
+
+
 async def get_tron_balances(wallet_address: str) -> List[TokenBalance]:
     """Fetch TRC-20 USDT / USDC balances from TronGrid."""
-    api_url = settings.TRON_API_URL
-    if not api_url or not settings.TRON_ENABLED:
+    # Check cache first
+    cached = _get_cached("tron", wallet_address)
+    if cached is not None:
+        return cached
+
+    if not settings.TRON_ENABLED:
         return []
+
+    net = "mainnet" if settings.USE_MAINNET else "testnet"
+    api_urls = []
+    if settings.TRON_API_URL:
+        api_urls.append(settings.TRON_API_URL)
+    api_urls.extend(TRON_FALLBACK_APIS.get(net, []))
 
     results: List[TokenBalance] = []
     tokens = {
@@ -186,36 +350,41 @@ async def get_tron_balances(wallet_address: str) -> List[TokenBalance]:
     for symbol, contract in tokens.items():
         if not contract:
             continue
-        try:
-            # TronGrid /wallet/triggerconstantcontract
-            url = f"{api_url}/wallet/triggerconstantcontract"
-            # Convert base58 wallet address to hex for parameter
-            # TronGrid accepts base58 owner_address and parameter as hex-padded address
-            payload = {
-                "owner_address": wallet_address,
-                "contract_address": contract,
-                "function_selector": "balanceOf(address)",
-                "parameter": _tron_address_to_parameter(wallet_address),
-                "visible": True,
-            }
-            headers = {}
-            if settings.TRON_API_KEY:
-                headers["TRON-PRO-API-KEY"] = settings.TRON_API_KEY
+        fetched = False
+        for api_url in api_urls:
+            try:
+                url = f"{api_url}/wallet/triggerconstantcontract"
+                payload = {
+                    "owner_address": wallet_address,
+                    "contract_address": contract,
+                    "function_selector": "balanceOf(address)",
+                    "parameter": _tron_address_to_parameter(wallet_address),
+                    "visible": True,
+                }
+                headers = {}
+                if settings.TRON_API_KEY and settings.TRON_API_KEY != "your-trongrid-api-key-here":
+                    headers["TRON-PRO-API-KEY"] = settings.TRON_API_KEY
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                body = resp.json()
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+                    resp.raise_for_status()
+                    body = resp.json()
 
-            constant_result = body.get("constant_result", ["0"])
-            raw = int(constant_result[0], 16) if constant_result and constant_result[0] else 0
-            bal = Decimal(raw) / Decimal(10 ** 6)
+                constant_result = body.get("constant_result", ["0"])
+                raw = int(constant_result[0], 16) if constant_result and constant_result[0] else 0
+                bal = Decimal(raw) / Decimal(10 ** 6)
 
-            results.append(TokenBalance(chain="tron", token=symbol, balance=bal, wallet_address=wallet_address))
-        except Exception as e:
-            logger.warning(f"Failed to fetch {symbol} balance on Tron for {wallet_address}: {e}")
+                results.append(TokenBalance(chain="tron", token=symbol, balance=bal, wallet_address=wallet_address))
+                fetched = True
+                break  # Success — stop trying more APIs
+            except Exception as e:
+                logger.warning(f"Tron API {api_url} failed for {symbol}: {e}")
+                continue
+
+        if not fetched:
             results.append(TokenBalance(chain="tron", token=symbol, balance=Decimal(0), wallet_address=wallet_address))
 
+    _set_cached("tron", wallet_address, results)
     return results
 
 
@@ -227,10 +396,8 @@ def _tron_address_to_parameter(address: str) -> str:
     import base58
     try:
         decoded = base58.b58decode_check(address)
-        # Drop the 0x41 prefix byte, hex-encode, pad to 64 chars
         return decoded[1:].hex().zfill(64)
     except Exception:
-        # If already hex or bad format, just pad it
         clean = address.replace("0x", "").replace("41", "", 1) if address.startswith("41") else address
         return clean.zfill(64)
 
@@ -242,7 +409,7 @@ async def _with_chain_timeout(coro, chain: str, wallet_address: str) -> List[Tok
     try:
         return await asyncio.wait_for(coro, timeout=CHAIN_TIMEOUT)
     except asyncio.TimeoutError:
-        logger.warning(f"Timeout fetching {chain} balance for {wallet_address[:10]}... (>{CHAIN_TIMEOUT}s) — skipping")
+        logger.warning(f"Timeout fetching {chain} balance for {wallet_address[:10]}... (>{CHAIN_TIMEOUT}s)")
         return []
 
 

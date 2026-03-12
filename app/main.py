@@ -20,6 +20,8 @@ from app.routes import (
     promo,
     # Subscription checkout (public)
     subscription_checkout,
+    # Web3 subscriptions
+    web3_subscriptions,
 )
 
 # Configure logging
@@ -99,7 +101,8 @@ app.include_router(escrow.router)  # Soroban escrow endpoints
 app.include_router(wallets.router)  # Merchant wallet management
 
 # Enterprise feature routers
-app.include_router(payment_links.router)  # Reusable payment links
+app.include_router(payment_links.router)  # Reusable payment links (merchant CRUD)
+app.include_router(payment_links.pay_router)  # Public payment link checkout
 app.include_router(invoices.router)  # Invoice management
 app.include_router(subscriptions.router)  # Recurring payments
 app.include_router(refunds.router)  # Refund processing
@@ -114,6 +117,9 @@ app.include_router(subscription_checkout.router)  # Public subscription checkout
 # Promo code / coupon routers
 app.include_router(promo.merchant_promo_router)  # Merchant promo management
 app.include_router(promo.payment_coupon_router)  # Checkout coupon application
+
+# Web3 subscription routers
+app.include_router(web3_subscriptions.router)  # Web3 recurring payments
 
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")
@@ -203,6 +209,17 @@ async def startup_event():
     logger.info("   python run_listeners.py                # All enabled chains")
     logger.info("   python run_listeners.py polygon tron   # Specific chains only")
     logger.info("")
+    
+    # Start Web3 subscription scheduler if enabled
+    if settings.WEB3_SUBSCRIPTIONS_ENABLED:
+        from app.services.subscription_scheduler import scheduler
+        scheduler.interval_seconds = settings.SCHEDULER_INTERVAL_SECONDS
+        scheduler.batch_size = settings.SCHEDULER_BATCH_SIZE
+        await scheduler.start()
+        logger.info("✅ Web3 subscription scheduler started")
+    else:
+        logger.info("ℹ️  Web3 subscription scheduler disabled (set WEB3_SUBSCRIPTIONS_ENABLED=true to enable)")
+    
     logger.info("=" * 60)
 
 
@@ -210,6 +227,10 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown."""
+    # Stop subscription scheduler
+    if settings.WEB3_SUBSCRIPTIONS_ENABLED:
+        from app.services.subscription_scheduler import scheduler
+        await scheduler.stop()
     logger.info("Shutting down Dari for Business...")
 
 

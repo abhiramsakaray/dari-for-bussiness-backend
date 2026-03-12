@@ -141,11 +141,11 @@ async def checkout_page(
 
     # Chain logos (CDN SVGs)
     chain_logos = {
-        'stellar':  'https://cryptologos.cc/logos/stellar-xlm-logo.svg',
-        'ethereum': 'https://cryptologos.cc/logos/ethereum-eth-logo.svg',
-        'polygon':  'https://cryptologos.cc/logos/polygon-matic-logo.svg',
-        'base':     'https://raw.githubusercontent.com/base-org/brand-kit/main/logo/symbol/Base_Symbol_Blue.svg',
-        'tron':     'https://cryptologos.cc/logos/tron-trx-logo.svg',
+        'stellar':  '/public/assets/stellar.png',
+        'ethereum': '/public/assets/ethereum.png',
+        'polygon':  '/public/assets/polygon.png',
+        'base':     '/public/assets/base.png',
+        'tron':     '/public/assets/tron.png',
     }
 
     currency_symbols = {
@@ -387,6 +387,83 @@ async def checkout_page(
         "dari_qr_b64": dari_qr_b64,
         "show_dari": dari_qr_b64 is not None,
     })
+
+
+@router.get("/{session_id}/refresh-qr")
+async def refresh_qr_after_coupon(
+    session_id: str,
+    amount: float,
+    db: Session = Depends(get_db),
+):
+    """
+    Return a new QR code and token amount after a coupon discount is applied.
+    `amount` is the new USD final price.
+    """
+    session = db.query(PaymentSession).filter(PaymentSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status == PaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="Session already paid")
+
+    # Recalculate token amount proportionally
+    original_fiat = float(session.amount_fiat or 1)
+    original_token = float(session.amount_token or session.amount_usdc or 0)
+    if original_fiat > 0:
+        new_token = round(original_token * (amount / original_fiat), 8)
+    else:
+        new_token = round(amount, 8)
+
+    # Resolve payment address and chain config
+    current_chain = (session.chain or 'stellar').lower()
+    current_token = (session.token or 'USDC').upper()
+    payment_address = session.merchant_wallet or ''
+    if not payment_address and current_chain == 'stellar' and session.merchant:
+        payment_address = session.merchant.stellar_address or ''
+
+    # Rebuild QR data
+    is_testnet = settings.STELLAR_NETWORK == 'testnet'
+    qr_data = payment_address
+    decimals = 6
+
+    chain_id_map = {
+        'ethereum': getattr(settings, 'ETHEREUM_CHAIN_ID', None),
+        'polygon':  getattr(settings, 'POLYGON_CHAIN_ID', None),
+        'base':     getattr(settings, 'BASE_CHAIN_ID', None),
+    }
+    token_contract_map = {
+        ('ethereum', 'USDC'): getattr(settings, 'ETHEREUM_USDC_ADDRESS', None),
+        ('ethereum', 'USDT'): getattr(settings, 'ETHEREUM_USDT_ADDRESS', None),
+        ('polygon',  'USDC'): getattr(settings, 'POLYGON_USDC_ADDRESS', None),
+        ('polygon',  'USDT'): getattr(settings, 'POLYGON_USDT_ADDRESS', None),
+        ('base',     'USDC'): getattr(settings, 'BASE_USDC_ADDRESS', None),
+        ('tron',     'USDT'): getattr(settings, 'TRON_USDT_ADDRESS', None),
+    }
+
+    try:
+        if current_chain in ('ethereum', 'polygon', 'base'):
+            chain_id = chain_id_map.get(current_chain)
+            token_contract = token_contract_map.get((current_chain, current_token))
+            if token_contract and chain_id:
+                amount_wei = int(Decimal(str(new_token)) * (10 ** decimals))
+                qr_data = f"ethereum:{token_contract}@{chain_id}/transfer?address={payment_address}&uint256={amount_wei}"
+    except Exception:
+        qr_data = payment_address
+
+    # Generate QR image
+    qr = qrcode.QRCode(version=1, box_size=8, border=4)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+    return {
+        "qr_code_b64": qr_b64,
+        "amount_token": f"{new_token:.8f}",
+        "token": current_token,
+        "final_amount_usd": round(amount, 2),
+    }
 
 
 @router.get("/api/{session_id}", response_model=PaymentSessionDetail)

@@ -3,22 +3,29 @@ Payment Links API Routes
 Reusable payment links for merchants
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional, List
 
 from app.core.database import get_db
 from app.core import require_merchant
-from app.models.models import Merchant, PaymentLink, PaymentLinkSession, PaymentSession
+from app.core.config import settings
+from app.models.models import Merchant, PaymentLink, PaymentLinkSession, PaymentSession, PaymentStatus
 from app.schemas.schemas import (
     PaymentLinkCreate, PaymentLinkUpdate, PaymentLinkResponse, PaymentLinkList
 )
 from app.services.price_service import PriceService
+from app.services.payment_utils import generate_session_id
 
 router = APIRouter(prefix="/payment-links", tags=["Payment Links"])
+pay_router = APIRouter(prefix="/pay", tags=["Public Payment Links"])
+
+_price_svc = PriceService()
 
 
 def generate_link_id() -> str:
@@ -333,3 +340,137 @@ async def get_link_analytics(
             for p in recent_payments
         ]
     }
+
+
+# ============= PUBLIC PAYMENT LINK HANDLER =============
+
+@pay_router.get("/{link_id}")
+async def open_payment_link(
+    link_id: str,
+    request: Request,
+    amount: Optional[float] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Public endpoint — opens a payment link and creates a checkout session.
+    Redirects the payer to the checkout page.
+    """
+    link = db.query(PaymentLink).filter(PaymentLink.id == link_id).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Payment link not found")
+
+    if not link.is_active:
+        raise HTTPException(status_code=410, detail="This payment link is no longer active")
+
+    if link.expires_at and datetime.utcnow() > link.expires_at:
+        raise HTTPException(status_code=410, detail="This payment link has expired")
+
+    if link.is_single_use and link.payment_count > 0:
+        raise HTTPException(status_code=410, detail="This payment link has already been used")
+
+    # Determine fiat amount
+    if link.is_amount_fixed:
+        fiat_amount = float(link.amount_fiat)
+    else:
+        if amount is None:
+            # Return a minimal HTML form for the customer to enter an amount
+            currency = link.fiat_currency or "USD"
+            min_val = f' min="{link.min_amount}"' if link.min_amount else ""
+            max_val = f' max="{link.max_amount}"' if link.max_amount else ""
+            html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{link.name} — Enter Amount</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; display: flex; align-items: center;
+           justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }}
+    .card {{ background: #fff; border-radius: 12px; padding: 2rem; max-width: 380px;
+             width: 100%; box-shadow: 0 2px 20px rgba(0,0,0,.1); text-align: center; }}
+    h2 {{ margin: 0 0 .5rem; }}
+    p {{ color: #666; margin: 0 0 1.5rem; }}
+    input {{ width: 100%; padding: .75rem; font-size: 1.1rem; border: 1px solid #ddd;
+             border-radius: 8px; box-sizing: border-box; margin-bottom: 1rem; }}
+    button {{ width: 100%; padding: .85rem; background: #4f46e5; color: #fff;
+              border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
+    button:hover {{ background: #4338ca; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>{link.name}</h2>
+    { f'<p>{link.description}</p>' if link.description else '<p>Enter the amount to pay</p>' }
+    <form method="get" action="/pay/{link_id}">
+      <input type="number" name="amount" placeholder="Amount ({currency})"
+             step="0.01"{min_val}{max_val} required>
+      <button type="submit">Continue to Payment</button>
+    </form>
+  </div>
+</body>
+</html>"""
+            return HTMLResponse(content=html)
+
+        fiat_amount = amount
+        if link.min_amount and fiat_amount < float(link.min_amount):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount must be at least {link.min_amount} {link.fiat_currency}"
+            )
+        if link.max_amount and fiat_amount > float(link.max_amount):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount must be at most {link.max_amount} {link.fiat_currency}"
+            )
+
+    # Pick default token / chain
+    token_symbol = (link.accepted_tokens[0] if link.accepted_tokens else "USDC")
+    default_chain = (link.accepted_chains[0] if link.accepted_chains else "stellar")
+    fiat_currency = link.fiat_currency or "USD"
+
+    # Convert fiat → token
+    try:
+        token_amount = await _price_svc.convert_fiat_to_token(
+            Decimal(str(fiat_amount)),
+            fiat_currency,
+            token_symbol
+        )
+    except Exception:
+        token_amount = Decimal(str(fiat_amount))
+
+    # Build fallback URLs
+    base_url = str(request.base_url).rstrip("/")
+    success_url = link.success_url or base_url
+    cancel_url = link.cancel_url or base_url
+
+    # Create checkout session
+    session_id = generate_session_id()
+    new_session = PaymentSession(
+        id=session_id,
+        merchant_id=link.merchant_id,
+        amount_fiat=fiat_amount,
+        fiat_currency=fiat_currency,
+        amount_token=str(token_amount),
+        amount_usdc=str(token_amount),
+        token=token_symbol,
+        chain=default_chain,
+        accepted_tokens=link.accepted_tokens,
+        accepted_chains=link.accepted_chains,
+        status=PaymentStatus.CREATED,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        expires_at=datetime.utcnow() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES),
+        session_metadata={"payment_link_id": link.id},
+    )
+    db.add(new_session)
+    db.flush()  # Persist session row before FK reference in payment_link_sessions
+
+    # Record the link→session association
+    db.add(PaymentLinkSession(payment_link_id=link.id, session_id=session_id))
+
+    # Increment view count
+    link.view_count = (link.view_count or 0) + 1
+
+    db.commit()
+
+    return RedirectResponse(url=f"/checkout/{session_id}", status_code=302)

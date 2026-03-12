@@ -69,12 +69,12 @@
 
         /* ── PENDING OVERLAY ── */
         .pending-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:90;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:16px;animation:fadeIn .3s ease;backdrop-filter:blur(4px)}
-        .pending-box{background:#1e293b;border:1.5px solid #3b82f6;border-radius:16px;padding:36px 40px;text-align:center;max-width:380px}
-        .pending-spinner{width:48px;height:48px;border:4px solid rgba(59,130,246,.25);border-top-color:#3b82f6;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 20px}
+        .pending-box{background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;padding:36px 40px;text-align:center;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+        .pending-spinner{width:48px;height:48px;border:4px solid rgba(59,130,246,.15);border-top-color:#3b82f6;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 20px}
         @keyframes spin{to{transform:rotate(360deg)}}
-        .pending-title{font-size:20px;font-weight:700;color:#fff;margin-bottom:6px}
-        .pending-sub{font-size:14px;color:#94a3b8;font-weight:500}
-        .pending-tx{font-size:11px;color:#64748b;margin-top:14px;word-break:break-all}
+        .pending-title{font-size:20px;font-weight:700;color:#1e293b;margin-bottom:6px}
+        .pending-sub{font-size:14px;color:#64748b;font-weight:500}
+        .pending-tx{font-size:11px;color:#94a3b8;margin-top:14px;word-break:break-all}
         @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
         .status-pill .s-label{font-size:13px;font-weight:600}
 
@@ -259,7 +259,7 @@
             <div class="price-fiat" id="priceFiat">{{ currency_symbol }}{{ amount_fiat }}</div>
             <div id="priceLocalSub" style="display:none;font-size:12px;color:#9ca3af;margin-top:2px;font-family:'Inter',sans-serif"></div>
             <div class="price-crypto">
-                &#8776; <span class="tag">{{ amount_token }} {{ token }}</span> on {{ chain_name }}
+                &#8776; <span class="tag" id="cryptoTag">{{ amount_token }} {{ token }}</span> on {{ chain_name }}
             </div>
         </div>
 
@@ -442,11 +442,6 @@
                     </div>
                     <div class="ch-info">
                         <div class="ch-name">{{ ch.name }}</div>
-                        <div class="ch-wallets">
-                            {% for w in ch.wallets[:3] %}
-                            <div class="w-dot" style="background:{{ w.color }}" title="{{ w.name }}">{{ w.abbr }}</div>
-                            {% endfor %}
-                        </div>
                     </div>
                 </div>
                 {% endfor %}
@@ -520,29 +515,11 @@
                     </div>
                     <div class="qr-wrap">
                         <div>
-                            <div class="qr-img"><img src="{{ qr_code_b64 }}" alt="QR"></div>
+                            <div class="qr-img" id="qrImgWrap"><img id="qrImg" src="{{ qr_code_b64 }}" alt="QR"></div>
                             <div class="qr-scan">Scan with any app</div>
                         </div>
-                        <div class="wal-icons">
-                            {% for w in current_chain_wallets %}
-                            <a href="{{ w.url }}" target="_blank" class="wal-icon" title="{{ w.name }}" style="background:{{ w.bg }}">
-                                {% if w.icon %}<img src="{{ w.icon }}" alt="{{ w.name }}">{% else %}<span class="wal-abbr">{{ w.abbr }}</span>{% endif %}
-                            </a>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Recommended -->
-                <div class="rec-section">
-                    <div class="rec-lbl">Recommended</div>
-                    <a href="{{ recommended_wallet.url }}" target="_blank" class="rec-item">
-                        <div class="rec-icon" style="background:{{ recommended_wallet.bg }}">
-                            {% if recommended_wallet.icon %}<img src="{{ recommended_wallet.icon }}" alt="">{% else %}<span class="wal-abbr">{{ recommended_wallet.abbr }}</span>{% endif %}
-                        </div>
-                        <div class="rec-name">{{ recommended_wallet.label }}</div>
-                        <div class="rec-arr">&#8250;</div>
-                    </a>
+                    </div>
                 </div>
 
                 <!-- Details -->
@@ -556,9 +533,9 @@
                     </div>
                     <div class="d-row">
                         <div class="d-lbl">Amount</div>
-                        <div class="d-val">
-                            {{ amount_token }} {{ token }}
-                            <button class="cp-btn" onclick="cp('{{ amount_token }}',this)" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+                        <div class="d-val" id="detailAmount">
+                            <span id="detailAmountText">{{ amount_token }} {{ token }}</span>
+                            <button class="cp-btn" id="detailAmountCopy" onclick="cp('{{ amount_token }}',this)" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
                         </div>
                     </div>
                     {% if memo_required %}
@@ -895,6 +872,21 @@ function applyCoupon(){
             if(el)el.textContent='$'+parseFloat(d.final_amount).toFixed(2);
             appliedCoupon={code:d.coupon_code,discount:d.discount_amount,final:d.final_amount};
             inp.disabled=true;btn.textContent='✓';btn.disabled=true;
+
+            // Refresh QR code and crypto amount for the discounted price
+            if(parseFloat(d.final_amount)>0){
+                fetch('/checkout/'+SESSION+'/refresh-qr?amount='+d.final_amount)
+                    .then(r=>r.json()).then(qr=>{
+                        const qrImg=document.getElementById('qrImg');
+                        if(qrImg)qrImg.src=qr.qr_code_b64;
+                        const tag=document.getElementById('cryptoTag');
+                        if(tag)tag.textContent=qr.amount_token+' '+qr.token;
+                        const amtTxt=document.getElementById('detailAmountText');
+                        if(amtTxt)amtTxt.textContent=qr.amount_token+' '+qr.token;
+                        const amtCopyBtn=document.getElementById('detailAmountCopy');
+                        if(amtCopyBtn)amtCopyBtn.onclick=()=>cp(qr.amount_token,amtCopyBtn);
+                    }).catch(()=>{});
+            }
 
             // If 100% discount → auto-complete payment (no blockchain payment needed)
             if(parseFloat(d.final_amount)<=0){

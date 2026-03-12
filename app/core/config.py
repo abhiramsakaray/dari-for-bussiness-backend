@@ -187,6 +187,26 @@ class Settings(BaseSettings):
     # ============= WEBHOOK SECURITY =============
     WEBHOOK_SIGNING_SECRET: Optional[str] = None
     
+    # ============= WEB3 SUBSCRIPTIONS =============
+    # Gasless Relayer
+    RELAYER_PRIVATE_KEY: str = ""
+    RELAYER_MAX_GAS_PRICE_GWEI: int = 100
+    
+    # Subscription Contract Addresses (set per chain after deployment)
+    SUBSCRIPTION_CONTRACT_ETHEREUM: str = ""
+    SUBSCRIPTION_CONTRACT_POLYGON: str = ""
+    SUBSCRIPTION_CONTRACT_BASE: str = ""
+    SUBSCRIPTION_CONTRACT_ARBITRUM: str = ""
+    
+    # Scheduler
+    SCHEDULER_INTERVAL_SECONDS: int = 60
+    SCHEDULER_BATCH_SIZE: int = 100
+    SCHEDULER_MAX_RETRIES: int = 6
+    SCHEDULER_RETRY_INTERVAL_HOURS: int = 12
+    
+    # Enable/disable Web3 subscription scheduler
+    WEB3_SUBSCRIPTIONS_ENABLED: bool = False
+    
     @model_validator(mode="after")
     def resolve_network_config(self):
         """Set active config fields based on USE_MAINNET toggle."""

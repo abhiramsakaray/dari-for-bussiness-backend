@@ -1,0 +1,25 @@
+{
+    "name": "dari-subscription-contracts",
+    "version": "1.0.0",
+    "description": "Dari for Business - Web3 Subscription Smart Contracts",
+    "scripts": {
+        "compile": "hardhat compile",
+        "test": "hardhat test",
+        "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+        "deploy:polygon-testnet": "hardhat run scripts/deploy.js --network polygonAmoy",
+        "deploy:base-testnet": "hardhat run scripts/deploy.js --network baseSepolia",
+        "deploy:ethereum-testnet": "hardhat run scripts/deploy.js --network sepolia",
+        "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+        "deploy:base": "hardhat run scripts/deploy.js --network base",
+        "deploy:ethereum": "hardhat run scripts/deploy.js --network ethereum",
+        "verify": "hardhat verify"
+    },
+    "devDependencies": {
+        "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+        "@openzeppelin/contracts-upgradeable": "^5.1.0",
+        "@openzeppelin/contracts": "^5.1.0",
+        "@openzeppelin/hardhat-upgrades": "^3.6.0",
+        "hardhat": "^2.22.0",
+        "dotenv": "^16.4.0"
+    }
+}

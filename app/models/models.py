@@ -1096,3 +1096,151 @@ class PromoCodeUsage(Base):
         Index('idx_promo_usage_customer', 'promo_code_id', 'customer_id'),
         Index('idx_promo_usage_merchant', 'merchant_id'),
     )
+
+
+# ============= WEB3 SUBSCRIPTION ENUMS =============
+
+class Web3SubscriptionStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+class MandateStatus(str, enum.Enum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class RelayerTxStatus(str, enum.Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    REVERTED = "reverted"
+    FAILED = "failed"
+
+
+# ============= WEB3 SUBSCRIPTION MODELS =============
+
+class SubscriptionMandate(Base):
+    """EIP-712 signed authorization from a subscriber for recurring payments"""
+    __tablename__ = "subscription_mandates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subscriber_address = Column(String(42), nullable=False, index=True)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    signature = Column(Text, nullable=False)
+    nonce = Column(Integer, nullable=False, default=0)
+    chain = Column(String(50), nullable=False)
+    token_address = Column(String(42), nullable=False)
+    token_symbol = Column(String(20), nullable=False)
+    amount = Column(Numeric(precision=18, scale=8), nullable=False)
+    interval_seconds = Column(Integer, nullable=False)
+    max_payments = Column(Integer, nullable=True)
+    approved_total = Column(Numeric(precision=18, scale=8), nullable=True)
+    status = Column(SQLEnum(MandateStatus), nullable=False, default=MandateStatus.ACTIVE)
+    activated_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    merchant = relationship("Merchant")
+
+    __table_args__ = (
+        Index('idx_mandates_subscriber', 'subscriber_address'),
+        Index('idx_mandates_merchant', 'merchant_id'),
+        Index('idx_mandates_status', 'status'),
+    )
+
+
+class Web3Subscription(Base):
+    """On-chain recurring payment subscription"""
+    __tablename__ = "web3_subscriptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    onchain_subscription_id = Column(Integer, nullable=True)
+    chain = Column(String(50), nullable=False)
+    contract_address = Column(String(42), nullable=False)
+    subscriber_address = Column(String(42), nullable=False, index=True)
+    merchant_address = Column(String(42), nullable=False)
+    token_address = Column(String(42), nullable=False)
+    token_symbol = Column(String(20), nullable=False)
+    amount = Column(Numeric(precision=18, scale=8), nullable=False)
+    interval_seconds = Column(Integer, nullable=False)
+    next_payment_at = Column(DateTime, nullable=True)
+    status = Column(SQLEnum(Web3SubscriptionStatus), nullable=False, default=Web3SubscriptionStatus.ACTIVE)
+    plan_id = Column(UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=True)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    mandate_id = Column(UUID(as_uuid=True), ForeignKey("subscription_mandates.id"), nullable=True)
+    created_tx_hash = Column(String(66), nullable=True)
+    cancelled_tx_hash = Column(String(66), nullable=True)
+    customer_email = Column(String(255), nullable=True)
+    customer_name = Column(String(255), nullable=True)
+    failed_payment_count = Column(Integer, nullable=False, default=0)
+    total_payments = Column(Integer, nullable=False, default=0)
+    total_amount_collected = Column(Numeric(precision=18, scale=8), nullable=False, default=0)
+    cancelled_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    merchant = relationship("Merchant")
+    plan = relationship("SubscriptionPlan")
+    mandate = relationship("SubscriptionMandate")
+    payments = relationship("Web3SubscriptionPayment", back_populates="subscription")
+
+    __table_args__ = (
+        Index('idx_web3_subs_merchant', 'merchant_id'),
+        Index('idx_web3_subs_subscriber', 'subscriber_address'),
+        Index('idx_web3_subs_status', 'status'),
+        Index('idx_web3_subs_next_payment', 'next_payment_at'),
+    )
+
+
+class Web3SubscriptionPayment(Base):
+    """Individual payment execution for a Web3 subscription"""
+    __tablename__ = "web3_subscription_payments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("web3_subscriptions.id"), nullable=False)
+    amount = Column(Numeric(precision=18, scale=8), nullable=False)
+    token_symbol = Column(String(20), nullable=False)
+    chain = Column(String(50), nullable=False)
+    payment_number = Column(Integer, nullable=False, default=1)
+    period_start = Column(DateTime, nullable=True)
+    period_end = Column(DateTime, nullable=True)
+    tx_hash = Column(String(66), nullable=True)
+    block_number = Column(Integer, nullable=True)
+    status = Column(SQLEnum(PaymentStatus), nullable=False, default=PaymentStatus.PENDING)
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    subscription = relationship("Web3Subscription", back_populates="payments")
+
+    __table_args__ = (
+        Index('idx_web3_payments_sub', 'subscription_id'),
+        Index('idx_web3_payments_status', 'status'),
+    )
+
+
+class RelayerTransaction(Base):
+    """Tracks every transaction submitted by the gasless relayer"""
+    __tablename__ = "relayer_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chain = Column(String(50), nullable=False)
+    function_name = Column(String(100), nullable=False)
+    relayer_address = Column(String(42), nullable=False)
+    nonce = Column(Integer, nullable=False)
+    status = Column(SQLEnum(RelayerTxStatus), nullable=False, default=RelayerTxStatus.PENDING)
+    tx_hash = Column(String(66), nullable=True)
+    gas_used = Column(Integer, nullable=True)
+    gas_price = Column(Numeric(precision=30, scale=0), nullable=True)
+    gas_cost_native = Column(Numeric(precision=18, scale=10), nullable=True)
+    error_message = Column(String(500), nullable=True)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("web3_subscriptions.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_relayer_tx_chain', 'chain'),
+        Index('idx_relayer_tx_status', 'status'),
+        Index('idx_relayer_tx_sub', 'subscription_id'),
+    )
