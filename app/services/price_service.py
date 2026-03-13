@@ -3,6 +3,11 @@ Price Conversion Service
 
 Handles fiat to crypto price conversion using external APIs.
 Supports multiple stablecoins and fiat currencies.
+
+FX Rate Providers (priority order, automatic fallback):
+  1. ExchangeRate-API  (primary, free tier)
+  2. OpenExchangeRates (fallback #1, requires APP_ID)
+  3. Fixer.io          (fallback #2, requires API_KEY)
 """
 
 import asyncio
@@ -85,6 +90,11 @@ class PriceService:
         """
         Get exchange rate between fiat currencies.
         
+        Tries providers in priority order with automatic fallback:
+          1. ExchangeRate-API (free)
+          2. OpenExchangeRates (if APP_ID configured)
+          3. Fixer.io (if API_KEY configured)
+        
         Args:
             from_currency: Source currency (e.g., "EUR")
             to_currency: Target currency (e.g., "USD")
@@ -99,24 +109,77 @@ class PriceService:
         cached = self._cache.get(cache_key)
         if cached:
             return cached
-            
-        try:
-            # Use free currency API
-            response = await self.client.get(
-                f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                rate = Decimal(str(data.get("rates", {}).get(to_currency, 1)))
-                self._cache.set(cache_key, rate)
-                return rate
-                
-        except Exception as e:
-            logger.error(f"Error fetching fiat rate: {e}")
-            
-        # Fallback: return 1 for USD-pegged
+
+        providers = [
+            ("exchangerate-api", self._fetch_exchangerate_api),
+            ("openexchangerates", self._fetch_openexchangerates),
+            ("fixer", self._fetch_fixer),
+        ]
+
+        for name, fetcher in providers:
+            try:
+                rate = await fetcher(from_currency, to_currency)
+                if rate is not None:
+                    self._cache.set(cache_key, rate)
+                    logger.debug("FX rate %s→%s = %s (provider: %s)", from_currency, to_currency, rate, name)
+                    return rate
+            except Exception as e:
+                logger.warning("FX provider %s failed: %s", name, e)
+                continue
+
+        logger.error("All FX providers failed for %s→%s, returning 1", from_currency, to_currency)
         return Decimal("1")
+
+    async def _fetch_exchangerate_api(self, from_currency: str, to_currency: str) -> Optional[Decimal]:
+        """Primary: ExchangeRate-API (free tier)."""
+        response = await self.client.get(
+            f"https://api.exchangerate-api.com/v4/latest/{from_currency}",
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            rate = data.get("rates", {}).get(to_currency)
+            if rate is not None:
+                return Decimal(str(rate))
+        return None
+
+    async def _fetch_openexchangerates(self, from_currency: str, to_currency: str) -> Optional[Decimal]:
+        """Fallback #1: OpenExchangeRates (requires APP_ID)."""
+        app_id = settings.OPENEXCHANGERATES_APP_ID
+        if not app_id:
+            return None
+        response = await self.client.get(
+            "https://openexchangerates.org/api/latest.json",
+            params={"app_id": app_id, "base": "USD"},
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            rates = response.json().get("rates", {})
+            from_rate = rates.get(from_currency)
+            to_rate = rates.get(to_currency)
+            if from_rate and to_rate:
+                return Decimal(str(to_rate)) / Decimal(str(from_rate))
+        return None
+
+    async def _fetch_fixer(self, from_currency: str, to_currency: str) -> Optional[Decimal]:
+        """Fallback #2: Fixer.io (requires API_KEY)."""
+        api_key = settings.FIXER_API_KEY
+        if not api_key:
+            return None
+        response = await self.client.get(
+            "http://data.fixer.io/api/latest",
+            params={"access_key": api_key, "base": "EUR", "symbols": f"{from_currency},{to_currency}"},
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                rates = data.get("rates", {})
+                from_rate = rates.get(from_currency)
+                to_rate = rates.get(to_currency)
+                if from_rate and to_rate:
+                    return Decimal(str(to_rate)) / Decimal(str(from_rate))
+        return None
         
     async def get_stablecoin_price(self, symbol: str, currency: str = "USD") -> Decimal:
         """

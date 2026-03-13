@@ -13,7 +13,10 @@ from app.schemas import (
 from app.services.payment_utils import generate_session_id
 from app.services.token_registry import get_token_registry
 from app.services.price_service import get_price_service
+from app.services.currency_service import get_currency_for_country, convert_usdc_to_local
+from app.services.payment_tokenization import auto_tokenize_session, sign_payload
 from app.core.auth import get_api_key
+from app.core.security_middleware import compute_risk_score
 import logging
 import json
 
@@ -69,7 +72,7 @@ async def create_payment_session_public(
             detail="Amount must be greater than 0"
         )
     
-    currency = session_data.currency or "USD"
+    currency = session_data.currency or merchant.base_currency or "USD"
     
     # Get accepted tokens and chains (with merchant defaults fallback)
     accepted_tokens = session_data.accepted_tokens or merchant.accepted_tokens or ["USDC", "USDT"]
@@ -112,6 +115,74 @@ async def create_payment_session_public(
         "USDC"  # Use USDC as reference
     )
     
+    # ── Dual Currency: Merchant side ──
+    merchant_country = getattr(merchant, 'country', None)
+    m_code, m_symbol, _ = get_currency_for_country(merchant_country)
+    # Use merchant's configured base_currency if set
+    if merchant.base_currency and merchant.base_currency != "USD":
+        m_code = merchant.base_currency
+        m_symbol = getattr(merchant, 'currency_symbol', m_symbol) or m_symbol
+
+    merchant_amount_local = None
+    merchant_exchange_rate = None
+    if m_code != "USD":
+        merchant_amount_local, merchant_exchange_rate = await convert_usdc_to_local(
+            float(token_amount), m_code
+        )
+    else:
+        merchant_amount_local = float(amount)
+        merchant_exchange_rate = 1.0
+
+    # ── Dual Currency: Payer side ──
+    payer_currency_code = None
+    payer_currency_symbol = None
+    payer_amount_local = None
+    payer_exchange_rate = None
+    payer_country = session_data.payer_country
+    is_cross_border = False
+
+    if session_data.payer_currency:
+        payer_currency_code = session_data.payer_currency.upper()
+        p_info = None
+        # Look up symbol from country map if country provided
+        if payer_country:
+            _, p_sym, _ = get_currency_for_country(payer_country)
+            payer_currency_symbol = p_sym
+        else:
+            payer_currency_symbol = payer_currency_code
+        if payer_currency_code != "USD":
+            payer_amount_local, payer_exchange_rate = await convert_usdc_to_local(
+                float(token_amount), payer_currency_code
+            )
+        else:
+            payer_amount_local = float(amount)
+            payer_exchange_rate = 1.0
+    elif payer_country:
+        p_code, p_sym, _ = get_currency_for_country(payer_country)
+        payer_currency_code = p_code
+        payer_currency_symbol = p_sym
+        if p_code != "USD":
+            payer_amount_local, payer_exchange_rate = await convert_usdc_to_local(
+                float(token_amount), p_code
+            )
+        else:
+            payer_amount_local = float(amount)
+            payer_exchange_rate = 1.0
+
+    # Cross-border detection
+    if payer_country and merchant_country:
+        is_cross_border = payer_country.strip().lower() != merchant_country.strip().lower()
+    elif payer_currency_code and m_code:
+        is_cross_border = payer_currency_code != m_code
+
+    # ── Risk scoring ──
+    risk_score, risk_flags = compute_risk_score(
+        amount_usd=float(amount),
+        payer_country=payer_country,
+        merchant_country=merchant_country,
+        is_cross_border=is_cross_border,
+    )
+
     # Create payment session
     new_session = PaymentSession(
         id=session_id,
@@ -128,14 +199,38 @@ async def create_payment_session_public(
         status=PaymentStatus.CREATED,
         success_url=str(session_data.success_url) if session_data.success_url else "",
         cancel_url=str(session_data.cancel_url) if session_data.cancel_url else "",
-        expires_at=datetime.utcnow() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
+        expires_at=datetime.utcnow() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES),
+        # Dual currency — merchant
+        merchant_currency=m_code,
+        merchant_currency_symbol=m_symbol,
+        merchant_amount_local=merchant_amount_local,
+        merchant_exchange_rate=merchant_exchange_rate,
+        # Dual currency — payer
+        payer_currency=payer_currency_code,
+        payer_currency_symbol=payer_currency_symbol,
+        payer_amount_local=payer_amount_local,
+        payer_exchange_rate=payer_exchange_rate,
+        payer_country=payer_country,
+        # Cross-border
+        is_cross_border=is_cross_border,
+        # Risk
+        risk_score=risk_score,
+        risk_flags=risk_flags if risk_flags else None,
     )
     
     db.add(new_session)
+    db.flush()
+    
+    # ── Auto-tokenize every session ──
+    payment_token = auto_tokenize_session(new_session)
+    new_session.payment_token = payment_token
+    new_session.is_tokenized = True
+    new_session.token_created_at = datetime.utcnow()
+    
     db.commit()
     db.refresh(new_session)
     
-    logger.info(f"✅ Created session {session_id} for {amount} {currency} ({token_amount} tokens)")
+    logger.info(f"✅ Created session {session_id} for {amount} {currency} ({token_amount} tokens) [tokenized]")
     
     # Generate checkout URL
     checkout_url = f"{settings.APP_URL}/checkout/{new_session.id}"
@@ -152,7 +247,16 @@ async def create_payment_session_public(
         status=new_session.status.value,
         amount_usdc=token_amount,  # Backward compatibility
         success_url=new_session.success_url,
-        cancel_url=new_session.cancel_url
+        cancel_url=new_session.cancel_url,
+        # Dual currency
+        payer_currency=payer_currency_code,
+        payer_amount_local=Decimal(str(payer_amount_local)) if payer_amount_local else None,
+        merchant_currency=m_code,
+        merchant_amount_local=Decimal(str(merchant_amount_local)) if merchant_amount_local else None,
+        is_cross_border=is_cross_border,
+        # Tokenization
+        payment_token=payment_token,
+        is_tokenized=True,
     )
 
 
@@ -205,7 +309,19 @@ async def get_payment_session_public(
         paid_at=session.paid_at,
         expires_at=session.expires_at,
         amount_usdc=session.amount_usdc,  # Backward compatibility
-        metadata=session.session_metadata
+        metadata=session.session_metadata,
+        # Dual currency
+        payer_currency=session.payer_currency,
+        payer_currency_symbol=session.payer_currency_symbol,
+        payer_amount_local=float(session.payer_amount_local) if session.payer_amount_local else None,
+        payer_exchange_rate=float(session.payer_exchange_rate) if session.payer_exchange_rate else None,
+        merchant_currency=session.merchant_currency,
+        merchant_currency_symbol=session.merchant_currency_symbol,
+        merchant_amount_local=float(session.merchant_amount_local) if session.merchant_amount_local else None,
+        merchant_exchange_rate=float(session.merchant_exchange_rate) if session.merchant_exchange_rate else None,
+        is_cross_border=session.is_cross_border or False,
+        is_tokenized=session.is_tokenized or False,
+        risk_score=float(session.risk_score) if session.risk_score else None,
     )
 
 

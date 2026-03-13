@@ -12,7 +12,9 @@ from app.core.database import Base
 class PaymentStatus(str, enum.Enum):
     CREATED = "created"
     PENDING = "pending"  # Payment detected, waiting confirmations
-    PAID = "paid"
+    PROCESSING = "processing"  # Payment being verified on-chain
+    CONFIRMED = "confirmed"  # Fully confirmed (alias kept for clarity)
+    PAID = "paid"  # Legacy alias for CONFIRMED — kept for backward compat
     EXPIRED = "expired"
     FAILED = "failed"
     REFUNDED = "refunded"
@@ -331,10 +333,28 @@ class PaymentSession(Base):
     
     # Tokenization
     payment_token = Column(String(100), nullable=True, index=True)  # ptok_xxx
+    is_tokenized = Column(Boolean, default=False, nullable=False)  # Whether session has been tokenized
+    token_created_at = Column(DateTime, nullable=True)  # When payment token was generated
     
     # Coupon / Promo code tracking
     coupon_code = Column(String(50), nullable=True)
     discount_amount = Column(Numeric(precision=14, scale=2), nullable=True)
+    
+    # ── Dual Currency (payer + merchant) ──
+    payer_currency = Column(String(10), nullable=True)  # Payer's local currency (e.g. "EUR")
+    payer_currency_symbol = Column(String(10), nullable=True)  # e.g. "€"
+    payer_amount_local = Column(Numeric(precision=14, scale=2), nullable=True)  # Amount in payer's currency
+    payer_exchange_rate = Column(Numeric(precision=18, scale=8), nullable=True)  # payer currency to USD rate
+    merchant_currency = Column(String(10), nullable=True)  # Merchant's base currency (e.g. "INR")
+    merchant_currency_symbol = Column(String(10), nullable=True)  # e.g. "₹"
+    merchant_amount_local = Column(Numeric(precision=14, scale=2), nullable=True)  # Amount in merchant's currency
+    merchant_exchange_rate = Column(Numeric(precision=18, scale=8), nullable=True)  # merchant currency to USD rate
+    
+    # ── Cross-border / Compliance ──
+    is_cross_border = Column(Boolean, default=False, nullable=False)  # Payer and merchant in different countries
+    payer_country = Column(String(100), nullable=True)  # Payer's country (from billing address)
+    risk_score = Column(Numeric(precision=5, scale=2), nullable=True)  # Fraud risk score (0-100)
+    risk_flags = Column(JSON, nullable=True)  # List of risk flags triggered
     
     # Relationships
     merchant = relationship("Merchant", back_populates="payment_sessions")
@@ -1243,4 +1263,108 @@ class RelayerTransaction(Base):
         Index('idx_relayer_tx_chain', 'chain'),
         Index('idx_relayer_tx_status', 'status'),
         Index('idx_relayer_tx_sub', 'subscription_id'),
+    )
+
+
+# ============= LEDGER =============
+
+class LedgerEntryType(str, enum.Enum):
+    DEBIT = "debit"
+    CREDIT = "credit"
+    CONVERSION = "conversion"
+    SETTLEMENT = "settlement"
+    FEE = "fee"
+    REFUND_DEBIT = "refund_debit"
+    REFUND_CREDIT = "refund_credit"
+
+
+class LedgerEntry(Base):
+    """Immutable double-entry ledger for every financial event."""
+    __tablename__ = "ledger_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=True)
+
+    entry_type = Column(SQLEnum(LedgerEntryType), nullable=False)
+    amount = Column(Numeric(precision=20, scale=8), nullable=False)
+    currency = Column(String(10), nullable=False)  # USD, USDC, EUR, etc.
+    direction = Column(String(6), nullable=False)  # "debit" or "credit"
+
+    # Conversion-specific
+    counter_amount = Column(Numeric(precision=20, scale=8), nullable=True)
+    counter_currency = Column(String(10), nullable=True)
+    exchange_rate = Column(Numeric(precision=18, scale=8), nullable=True)
+
+    # Reference
+    reference_type = Column(String(50), nullable=True)  # payment, refund, withdrawal, fee
+    reference_id = Column(String, nullable=True)
+    description = Column(String(500), nullable=True)
+
+    # Balances after this entry
+    balance_after = Column(Numeric(precision=20, scale=8), nullable=True)
+
+    # Immutability hash — sha256(prev_hash + entry data)
+    entry_hash = Column(String(64), nullable=False)
+    prev_hash = Column(String(64), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    merchant = relationship("Merchant")
+
+    __table_args__ = (
+        Index('ix_ledger_merchant', 'merchant_id'),
+        Index('ix_ledger_session', 'session_id'),
+        Index('ix_ledger_type', 'entry_type'),
+        Index('ix_ledger_created', 'created_at'),
+    )
+
+
+# ============= PAYMENT STATE TRANSITIONS =============
+
+class PaymentStateTransition(Base):
+    """Audit log of every payment status change with validation."""
+    __tablename__ = "payment_state_transitions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=False)
+    from_state = Column(String(30), nullable=False)
+    to_state = Column(String(30), nullable=False)
+    trigger = Column(String(100), nullable=True)  # What caused the transition
+    actor = Column(String(200), nullable=True)  # system, merchant_id, admin, listener
+    transition_metadata = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('ix_transitions_session', 'session_id'),
+        Index('ix_transitions_created', 'created_at'),
+    )
+
+
+# ============= COMPLIANCE SCREENING =============
+
+class ComplianceScreening(Base):
+    """Log of AML/sanctions screening results."""
+    __tablename__ = "compliance_screenings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=True)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
+
+    screening_type = Column(String(50), nullable=False)  # ofac, jurisdiction, threshold, velocity
+    result = Column(String(20), nullable=False)  # pass, flag, block
+    risk_level = Column(String(20), nullable=True)  # low, medium, high, critical
+
+    # Screened entity
+    entity_type = Column(String(50), nullable=True)  # payer, merchant, wallet
+    entity_value = Column(String(255), nullable=True)
+    country = Column(String(100), nullable=True)
+
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('ix_compliance_session', 'session_id'),
+        Index('ix_compliance_result', 'result'),
+        Index('ix_compliance_created', 'created_at'),
     )

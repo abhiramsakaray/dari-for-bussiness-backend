@@ -9,15 +9,43 @@ from app.core.cache import cache, make_cache_key
 from app.models import Merchant, PaymentSession, PaymentStatus
 from app.schemas import PaymentSessionStatus, PaymentListItem, LocalCurrencyAmount
 from app.services.currency_service import get_currency_for_country, build_local_amount
+from app.services.price_service import get_price_service
 from decimal import Decimal
 
 router = APIRouter(prefix="/merchant/payments", tags=["Merchant Payments"])
 logger = logging.getLogger(__name__)
 
 
+def _resolve_merchant_currency(merchant: Merchant) -> tuple[str, str]:
+    """Resolve merchant currency/symbol from profile with safe fallback."""
+    code = (getattr(merchant, "base_currency", None) or "USD").upper()
+    symbol = getattr(merchant, "currency_symbol", None)
+    if symbol:
+        return code, symbol
+
+    c_code, c_symbol, _ = get_currency_for_country(getattr(merchant, "country", None))
+    if c_code == code:
+        return code, c_symbol
+    return code, code
+
+
+async def _convert_amount(amount: Decimal, from_currency: str, to_currency: str) -> Decimal:
+    """Convert fiat amount between currencies for display normalization."""
+    src = (from_currency or "USD").upper()
+    dst = (to_currency or "USD").upper()
+    if src == dst:
+        return Decimal(str(amount))
+    try:
+        rate = await get_price_service().get_fiat_rate(src, dst)
+        return (Decimal(str(amount)) * rate).quantize(Decimal("0.01"))
+    except Exception:
+        return Decimal(str(amount))
+
+
 def _session_to_list_item(session: PaymentSession) -> PaymentListItem:
     """Convert a PaymentSession ORM object to a PaymentListItem with coupon breakdown."""
     discount = session.discount_amount or Decimal("0")
+    amount_paid = (session.amount_fiat or Decimal("0")) - discount
     return PaymentListItem(
         id=session.id,
         merchant_id=str(session.merchant_id),
@@ -25,6 +53,8 @@ def _session_to_list_item(session: PaymentSession) -> PaymentListItem:
         amount_fiat=session.amount_fiat,
         fiat_currency=session.fiat_currency,
         amount_usdc=session.amount_usdc,
+        token=session.token,
+        chain=session.chain,
         status=session.status.value,
         tx_hash=session.tx_hash,
         created_at=session.created_at,
@@ -34,7 +64,15 @@ def _session_to_list_item(session: PaymentSession) -> PaymentListItem:
         payer_name=session.payer_name,
         coupon_code=session.coupon_code,
         discount_amount=session.discount_amount,
-        amount_paid=session.amount_fiat - discount if session.discount_amount else None,
+        amount_paid=amount_paid,
+        # Dual currency
+        payer_currency=session.payer_currency,
+        payer_amount_local=float(session.payer_amount_local) if session.payer_amount_local else None,
+        merchant_currency=session.merchant_currency,
+        merchant_amount_local=float(session.merchant_amount_local) if session.merchant_amount_local else None,
+        is_cross_border=session.is_cross_border or False,
+        is_tokenized=session.is_tokenized or False,
+        risk_score=float(session.risk_score) if session.risk_score else None,
     )
 
 
@@ -43,21 +81,40 @@ async def _enrich_with_local_currency(
     merchant: Merchant,
 ) -> list[PaymentListItem]:
     """Add local currency conversions to payment list items."""
-    currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
-    if currency_code == "USD":
-        return items
+    currency_code, currency_symbol = _resolve_merchant_currency(merchant)
 
     for item in items:
-        item.amount_fiat_local = LocalCurrencyAmount(
-            **(await build_local_amount(float(item.amount_fiat), currency_code, currency_symbol))
+        base_amount = await _convert_amount(
+            Decimal(str(item.amount_fiat or 0)),
+            item.fiat_currency,
+            currency_code,
         )
+
+        item.amount_fiat_local = LocalCurrencyAmount(
+            **(await build_local_amount(float(base_amount), currency_code, currency_symbol))
+        )
+
+        # Keep these top-level fields consistent for frontend table cards.
+        item.merchant_currency = currency_code
+        item.merchant_amount_local = float(base_amount)
+
         if item.discount_amount is not None:
+            discount_amount = await _convert_amount(
+                Decimal(str(item.discount_amount or 0)),
+                item.fiat_currency,
+                currency_code,
+            )
             item.discount_amount_local = LocalCurrencyAmount(
-                **(await build_local_amount(float(item.discount_amount), currency_code, currency_symbol))
+                **(await build_local_amount(float(discount_amount), currency_code, currency_symbol))
             )
         if item.amount_paid is not None:
+            paid_amount = await _convert_amount(
+                Decimal(str(item.amount_paid or 0)),
+                item.fiat_currency,
+                currency_code,
+            )
             item.amount_paid_local = LocalCurrencyAmount(
-                **(await build_local_amount(float(item.amount_paid), currency_code, currency_symbol))
+                **(await build_local_amount(float(paid_amount), currency_code, currency_symbol))
             )
     return items
 
@@ -293,6 +350,18 @@ async def get_payment_session_detail(
         expires_at=session.expires_at,
         amount_usdc=session.amount_usdc,
         metadata=session.session_metadata,
+        # Dual currency
+        payer_currency=session.payer_currency,
+        payer_currency_symbol=session.payer_currency_symbol,
+        payer_amount_local=float(session.payer_amount_local) if session.payer_amount_local else None,
+        payer_exchange_rate=float(session.payer_exchange_rate) if session.payer_exchange_rate else None,
+        merchant_currency=session.merchant_currency,
+        merchant_currency_symbol=session.merchant_currency_symbol,
+        merchant_amount_local=float(session.merchant_amount_local) if session.merchant_amount_local else None,
+        merchant_exchange_rate=float(session.merchant_exchange_rate) if session.merchant_exchange_rate else None,
+        is_cross_border=session.is_cross_border or False,
+        is_tokenized=session.is_tokenized or False,
+        risk_score=float(session.risk_score) if session.risk_score else None,
     )
 
 

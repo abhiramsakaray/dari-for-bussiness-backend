@@ -6,7 +6,7 @@ from typing import List, Optional
 class Settings(BaseSettings):
     # Application
     APP_NAME: str = "Dari for Business"
-    APP_VERSION: str = "2.0.0"
+    APP_VERSION: str = "2.2.0"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
     APP_BASE_URL: str = "http://localhost:8000"
@@ -186,6 +186,26 @@ class Settings(BaseSettings):
     
     # ============= WEBHOOK SECURITY =============
     WEBHOOK_SIGNING_SECRET: Optional[str] = None
+    WEBHOOK_HMAC_ALGO: str = "sha256"
+    
+    # ============= REDIS =============
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_TOKEN_DB: int = 1
+    REDIS_ENABLED: bool = False  # Graceful fallback to in-memory when False
+    
+    # ============= FX RATE PROVIDERS (priority order) =============
+    FX_PRIMARY_PROVIDER: str = "exchangerate-api"  # exchangerate-api, openexchangerates, fixer
+    OPENEXCHANGERATES_APP_ID: str = ""
+    FIXER_API_KEY: str = ""
+    
+    # ============= AML / COMPLIANCE =============
+    AML_ENABLED: bool = True
+    AML_THRESHOLD_USD: float = 10000.0  # CTR threshold
+    AML_HIGH_RISK_THRESHOLD_USD: float = 3000.0  # Enhanced due diligence
+    
+    # ============= MONITORING =============
+    PROMETHEUS_ENABLED: bool = True
+    STRUCTURED_LOGGING: bool = True
     
     # ============= WEB3 SUBSCRIPTIONS =============
     # Gasless Relayer

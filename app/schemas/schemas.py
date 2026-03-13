@@ -327,6 +327,10 @@ class PaymentSessionCreate(BaseModel):
     # Payer data collection
     collect_payer_data: bool = Field(default=True, description="Collect payer info before payment")
 
+    # Payer currency (optional — auto-detected from payer country if not set)
+    payer_currency: Optional[str] = Field(None, description="Payer's local currency code (e.g. EUR)")
+    payer_country: Optional[str] = Field(None, description="Payer's country for cross-border detection")
+
     # Backward compatibility
     amount_usdc: Optional[Decimal] = Field(None, description="[DEPRECATED] Use 'amount' instead")
 
@@ -357,6 +361,17 @@ class PaymentSessionResponse(BaseModel):
     order_id: Optional[str] = None
     expires_at: datetime
     status: str
+    
+    # Dual currency
+    payer_currency: Optional[str] = None
+    payer_amount_local: Optional[Decimal] = None
+    merchant_currency: Optional[str] = None
+    merchant_amount_local: Optional[Decimal] = None
+    is_cross_border: bool = False
+    
+    # Tokenization
+    payment_token: Optional[str] = None
+    is_tokenized: bool = False
     
     # Backward compatibility
     amount_usdc: Optional[Decimal] = None
@@ -390,6 +405,23 @@ class PaymentSessionStatus(BaseModel):
     created_at: datetime
     paid_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    
+    # Dual currency
+    payer_currency: Optional[str] = None
+    payer_currency_symbol: Optional[str] = None
+    payer_amount_local: Optional[float] = None
+    payer_exchange_rate: Optional[float] = None
+    merchant_currency: Optional[str] = None
+    merchant_currency_symbol: Optional[str] = None
+    merchant_amount_local: Optional[float] = None
+    merchant_exchange_rate: Optional[float] = None
+    is_cross_border: bool = False
+    
+    # Tokenization
+    is_tokenized: bool = False
+    
+    # Risk
+    risk_score: Optional[float] = None
     
     # Backward compatibility
     amount_usdc: Optional[str] = None
@@ -454,6 +486,13 @@ class WebhookPayload(BaseModel):
     confirmations: Optional[int] = None
     status: str = "confirmed"
     timestamp: str
+    
+    # Dual currency
+    payer_currency: Optional[str] = None
+    payer_amount_local: Optional[float] = None
+    merchant_currency: Optional[str] = None
+    merchant_amount_local: Optional[float] = None
+    is_cross_border: bool = False
 
 
 # ============= ADMIN SCHEMAS =============
@@ -498,6 +537,15 @@ class PaymentListItem(BaseModel):
     amount_fiat_local: Optional[LocalCurrencyAmount] = None
     discount_amount_local: Optional[LocalCurrencyAmount] = None
     amount_paid_local: Optional[LocalCurrencyAmount] = None
+
+    # Dual currency (payer + merchant)
+    payer_currency: Optional[str] = None
+    payer_amount_local: Optional[float] = None
+    merchant_currency: Optional[str] = None
+    merchant_amount_local: Optional[float] = None
+    is_cross_border: bool = False
+    is_tokenized: bool = False
+    risk_score: Optional[float] = None
 
     # Backward compatibility
     amount_usdc: Optional[str] = None
@@ -1517,6 +1565,12 @@ class TokenizeCheckoutResponse(BaseModel):
     payment_token: str
     expires_in_seconds: int
     signature: str  # HMAC signature the frontend can verify
+    
+    # Dual currency summary included in tokenized response
+    payer_currency: Optional[str] = None
+    payer_amount_local: Optional[float] = None
+    merchant_currency: Optional[str] = None
+    merchant_amount_local: Optional[float] = None
 
 
 # ============= MRR / ARR ANALYTICS SCHEMAS =============

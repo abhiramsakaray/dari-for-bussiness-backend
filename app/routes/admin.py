@@ -55,7 +55,16 @@ async def list_all_payments(
             paid_at=session.paid_at,
             coupon_code=session.coupon_code,
             discount_amount=session.discount_amount,
-            amount_paid=session.amount_fiat - (session.discount_amount or 0) if session.discount_amount else None,
+            amount_paid=(session.amount_fiat or 0) - (session.discount_amount or 0),
+            payer_email=session.payer_email,
+            payer_name=session.payer_name,
+            payer_currency=session.payer_currency,
+            payer_amount_local=float(session.payer_amount_local) if session.payer_amount_local else None,
+            merchant_currency=session.merchant_currency,
+            merchant_amount_local=float(session.merchant_amount_local) if session.merchant_amount_local else None,
+            is_cross_border=session.is_cross_border or False,
+            is_tokenized=session.is_tokenized or False,
+            risk_score=float(session.risk_score) if session.risk_score else None,
         )
         for session in sessions
     ]

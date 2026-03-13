@@ -7,6 +7,12 @@ import logging
 import os
 
 from app.core.config import settings
+from app.core.security_middleware import SecurityHeadersMiddleware
+from app.core.monitoring import (
+    MetricsMiddleware,
+    get_metrics_response,
+    setup_structured_logging,
+)
 from app.routes import (
     auth, merchant, payments, checkout, admin, merchant_payments, 
     public, admin_webhooks, escrow, sessions, integrations, wallets,
@@ -35,7 +41,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Dari for Business",
     description="Multi-chain payment gateway supporting Stellar, Ethereum, Polygon, Base, Tron, and more",
-    version="2.0.0",
+    version="2.2.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -48,6 +54,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security middleware — rate limiting + OWASP headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Prometheus metrics middleware
+if settings.PROMETHEUS_ENABLED:
+    app.add_middleware(MetricsMiddleware)
 
 
 # Request logging middleware
@@ -136,7 +149,7 @@ async def root():
     """Root endpoint."""
     return {
         "name": "Dari for Business",
-        "version": "2.0.0",
+        "version": "2.2.0",
         "status": "operational",
         "network": settings.STELLAR_NETWORK,
         "docs": "/docs"
@@ -149,8 +162,16 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
+        "version": "2.2.0",
         "network": settings.STELLAR_NETWORK
     }
+
+
+# Prometheus metrics endpoint
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """Prometheus metrics scrape endpoint."""
+    return get_metrics_response()
 
 
 # Startup event
@@ -162,8 +183,11 @@ async def startup_event():
     from app.core.security import hash_password
     
     logger.info("=" * 60)
-    logger.info("🚀 Dari for Business - Multi-Chain Payment Gateway")
+    logger.info("🚀 Dari for Business - Multi-Chain Payment Gateway v2.2.0")
     logger.info("=" * 60)
+
+    # Initialize structured logging
+    setup_structured_logging()
     
     # Auto-create database tables if they don't exist
     try:

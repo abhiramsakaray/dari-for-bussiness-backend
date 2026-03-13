@@ -21,6 +21,8 @@ from app.schemas.schemas import (
 )
 from app.services.price_service import PriceService
 from app.services.payment_utils import generate_session_id
+from app.services.currency_service import get_currency_for_country, convert_usdc_to_local
+from app.services.payment_tokenization import auto_tokenize_session
 
 router = APIRouter(prefix="/payment-links", tags=["Payment Links"])
 pay_router = APIRouter(prefix="/pay", tags=["Public Payment Links"])
@@ -445,6 +447,22 @@ async def open_payment_link(
 
     # Create checkout session
     session_id = generate_session_id()
+
+    # ── Dual Currency: Merchant side ──
+    merchant = db.query(Merchant).filter(Merchant.id == link.merchant_id).first()
+    merchant_country = getattr(merchant, 'country', None) if merchant else None
+    m_code, m_symbol, _ = get_currency_for_country(merchant_country)
+    if merchant and merchant.base_currency and merchant.base_currency != "USD":
+        m_code = merchant.base_currency
+        m_symbol = getattr(merchant, 'currency_symbol', m_symbol) or m_symbol
+
+    merchant_amount_local = float(fiat_amount)
+    merchant_exchange_rate = 1.0
+    if m_code != "USD":
+        merchant_amount_local, merchant_exchange_rate = await convert_usdc_to_local(
+            float(token_amount), m_code
+        )
+
     new_session = PaymentSession(
         id=session_id,
         merchant_id=link.merchant_id,
@@ -461,9 +479,20 @@ async def open_payment_link(
         cancel_url=cancel_url,
         expires_at=datetime.utcnow() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES),
         session_metadata={"payment_link_id": link.id},
+        # Dual currency — merchant
+        merchant_currency=m_code,
+        merchant_currency_symbol=m_symbol,
+        merchant_amount_local=merchant_amount_local,
+        merchant_exchange_rate=merchant_exchange_rate,
     )
     db.add(new_session)
     db.flush()  # Persist session row before FK reference in payment_link_sessions
+
+    # Auto-tokenize
+    payment_token = auto_tokenize_session(new_session)
+    new_session.payment_token = payment_token
+    new_session.is_tokenized = True
+    new_session.token_created_at = datetime.utcnow()
 
     # Record the link→session association
     db.add(PaymentLinkSession(payment_link_id=link.id, session_id=session_id))

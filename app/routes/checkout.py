@@ -11,8 +11,11 @@ from app.models.models import PayerInfo
 from app.schemas import PaymentSessionDetail
 from app.schemas.schemas import PayerDataCollect, PayerDataResponse, TokenizeCheckoutResponse
 from app.services.payment_tokenization import (
-    create_payment_token, resolve_payment_token, revoke_payment_token, sign_payload,
+    create_payment_token, resolve_payment_token, revoke_payment_token,
+    sign_payload, build_session_token_payload,
 )
+from app.services.currency_service import get_currency_for_country, convert_usdc_to_local
+from app.core.security_middleware import compute_risk_score
 from decimal import Decimal
 from stellar_sdk import Keypair
 import qrcode
@@ -537,6 +540,43 @@ async def submit_payer_data(
     if data.name:
         session.payer_name = data.name
 
+    # ── Auto-detect payer currency from billing country ──
+    if data.billing_country and not session.payer_currency:
+        p_code, p_sym, _ = get_currency_for_country(data.billing_country)
+        session.payer_currency = p_code
+        session.payer_currency_symbol = p_sym
+        session.payer_country = data.billing_country
+        # Convert amount to payer's local currency
+        if p_code != "USD":
+            try:
+                p_local, p_rate = await convert_usdc_to_local(
+                    float(session.amount_token or session.amount_usdc or 0), p_code
+                )
+                session.payer_amount_local = p_local
+                session.payer_exchange_rate = p_rate
+            except Exception:
+                pass
+        else:
+            session.payer_amount_local = float(session.amount_fiat)
+            session.payer_exchange_rate = 1.0
+        # Cross-border detection
+        merchant_country = getattr(session.merchant, 'country', None)
+        if merchant_country and data.billing_country:
+            session.is_cross_border = (
+                data.billing_country.strip().lower() != merchant_country.strip().lower()
+            )
+
+        # Compute risk score with payer data
+        risk_score, risk_flags = compute_risk_score(
+            amount_usd=float(session.amount_fiat),
+            payer_country=data.billing_country,
+            merchant_country=merchant_country,
+            is_cross_border=session.is_cross_border or False,
+            payer_email=data.email,
+        )
+        session.risk_score = risk_score
+        session.risk_flags = risk_flags if risk_flags else None
+
     db.commit()
     db.refresh(payer)
 
@@ -568,27 +608,25 @@ async def tokenize_checkout(
         raise HTTPException(status_code=400, detail="Payment already completed")
 
     # Build the sensitive payload that gets tokenized
-    payload = {
-        "session_id": session.id,
-        "amount_fiat": str(session.amount_fiat),
-        "fiat_currency": session.fiat_currency,
-        "amount_token": session.amount_token or session.amount_usdc or "0",
-        "token": session.token or "USDC",
-        "chain": session.chain or "stellar",
-        "merchant_id": str(session.merchant_id),
-    }
+    payload = build_session_token_payload(session)
 
     token = create_payment_token(session.id, payload)
     sig = sign_payload({"payment_token": token, "session_id": session.id})
 
     # Store token reference on the session
     session.payment_token = token
+    session.is_tokenized = True
+    session.token_created_at = datetime.utcnow()
     db.commit()
 
     return TokenizeCheckoutResponse(
         payment_token=token,
         expires_in_seconds=settings.PAYMENT_EXPIRY_MINUTES * 60,
         signature=sig,
+        payer_currency=session.payer_currency,
+        payer_amount_local=float(session.payer_amount_local) if session.payer_amount_local else None,
+        merchant_currency=session.merchant_currency,
+        merchant_amount_local=float(session.merchant_amount_local) if session.merchant_amount_local else None,
     )
 
 
