@@ -566,7 +566,15 @@ class Subscription(Base):
     customer_id = Column(String, nullable=True)  # Merchant's customer ID
     
     # Status
-    status = Column(SQLEnum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE)
+    status = Column(
+        SQLEnum(
+            SubscriptionStatus,
+            name="subscription_status",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        ),
+        default=SubscriptionStatus.ACTIVE.value,
+    )
     
     # Billing cycle
     current_period_start = Column(DateTime, nullable=False)

@@ -177,6 +177,35 @@
             font-family: 'Courier New', monospace;
             font-size: 13px;
         }
+
+        .inline-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        @media (max-width: 700px) {
+            .inline-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .small-btn {
+            width: auto;
+            display: inline-block;
+            padding: 10px 14px;
+            margin-top: 0;
+        }
+
+        .link-preview {
+            margin-top: 12px;
+            border: 1px solid #000;
+            background: #fff;
+            padding: 10px;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -195,6 +224,34 @@
                 <label for="baseUrl">Base URL</label>
                 <input type="text" id="baseUrl" value="https://chainpe.onrender.com" placeholder="https://chainpe.onrender.com">
             </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>Hosted Subscription Link</h2>
+            <p style="margin-bottom:14px;color:#444;">Create a shareable plan URL to redirect users from your website to ChainPe hosted subscription approval.</p>
+            <div class="inline-row">
+                <div class="form-group">
+                    <label for="subscriptionPlanId">Plan ID</label>
+                    <input type="text" id="subscriptionPlanId" placeholder="plan_xxxxxxx">
+                </div>
+                <div class="form-group">
+                    <label for="frontendToken">Merchant JWT Token (for share-link API)</label>
+                    <input type="text" id="frontendToken" placeholder="Paste merchant bearer token">
+                </div>
+            </div>
+            <div class="inline-row">
+                <div class="form-group">
+                    <label for="returnUrl">Return URL</label>
+                    <input type="text" id="returnUrl" placeholder="https://merchant-site.com/subscriptions/success">
+                </div>
+                <div class="form-group">
+                    <label for="sourceTag">Source</label>
+                    <input type="text" id="sourceTag" placeholder="pricing_page">
+                </div>
+            </div>
+            <button class="small-btn" onclick="generateSubscriptionLink()">Generate Share Link</button>
+            <button class="small-btn" onclick="openDirectHostedPage()">Open Hosted Page Directly</button>
+            <div id="subscriptionLinkPreview" class="link-preview" style="display:none;"></div>
         </div>
         
         <!-- Quick Test Section -->
@@ -250,6 +307,8 @@
                 <li><strong>GET</strong> /integrations/payment-button?api_key=...</li>
                 <li><strong>GET</strong> /integrations/shopify-install</li>
                 <li><strong>GET</strong> /integrations/woocommerce-plugin</li>
+                <li><strong>GET</strong> /subscriptions/plans/{plan_id}/share-link</li>
+                <li><strong>GET</strong> /subscribe/{plan_id}</li>
             </ul>
         </div>
         
@@ -446,6 +505,63 @@ checkout_url = create_checkout('50.00', 'ORDER-123')
             showResponse('Payment completed successfully!', 'success');
         } else if (urlParams.get('payment') === 'cancel') {
             showResponse('Payment was cancelled', 'error');
+        }
+
+        async function generateSubscriptionLink() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            const token = document.getElementById('frontendToken').value.trim();
+            const planId = document.getElementById('subscriptionPlanId').value.trim();
+            const returnUrl = document.getElementById('returnUrl').value.trim();
+            const source = document.getElementById('sourceTag').value.trim() || 'integration_demo';
+            const preview = document.getElementById('subscriptionLinkPreview');
+
+            if (!planId) {
+                showResponse('Please enter plan ID', 'error');
+                return;
+            }
+            if (!token) {
+                showResponse('Please provide merchant JWT token for share-link API', 'error');
+                return;
+            }
+
+            const qs = new URLSearchParams();
+            if (source) qs.set('source', source);
+            if (returnUrl) qs.set('return_url', returnUrl);
+
+            const url = `${baseUrl}/subscriptions/plans/${encodeURIComponent(planId)}/share-link?${qs.toString()}`;
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                showResponse(`Error: ${data.detail || 'Unable to generate share link'}`, 'error');
+                return;
+            }
+
+            preview.style.display = 'block';
+            preview.innerHTML = `<strong>Share URL:</strong><br>${data.subscribe_url}`;
+            showResponse('Share link generated successfully', 'success');
+        }
+
+        function openDirectHostedPage() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            const planId = document.getElementById('subscriptionPlanId').value.trim();
+            const returnUrl = document.getElementById('returnUrl').value.trim();
+            const source = document.getElementById('sourceTag').value.trim() || 'integration_demo_direct';
+
+            if (!planId) {
+                showResponse('Please enter plan ID', 'error');
+                return;
+            }
+
+            const qs = new URLSearchParams({ source });
+            if (returnUrl) qs.set('return_url', returnUrl);
+
+            window.open(`${baseUrl}/subscribe/${encodeURIComponent(planId)}?${qs.toString()}`, '_blank');
         }
     </script>
 </body>

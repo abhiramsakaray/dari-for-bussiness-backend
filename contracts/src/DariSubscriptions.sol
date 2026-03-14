@@ -57,11 +57,9 @@ contract DariSubscriptions is
     /// @notice Supported ERC20 tokens (whitelist)
     mapping(address => bool) public supportedTokens;
 
-    /// @notice Tracks whether a subscription was already counted in arrays
-    /// to prevent duplicate pushes on re-creation edge cases
-    mapping(uint256 => bool) private _subIndexed;
-
     // ============= ERRORS =============
+
+    // NOTE: _subIndexed removed — was dead code (written but never read)
 
     error OnlyRelayer();
     error InvalidAddress();
@@ -101,7 +99,6 @@ contract DariSubscriptions is
         __Ownable_init(_owner);
         __Pausable_init();
         __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
 
         relayer = _relayer;
     }
@@ -126,6 +123,7 @@ contract DariSubscriptions is
     function addSupportedToken(address _token) external onlyOwner {
         if (_token == address(0)) revert InvalidAddress();
         supportedTokens[_token] = true;
+        emit SupportedTokenAdded(_token);
     }
 
     /**
@@ -134,6 +132,7 @@ contract DariSubscriptions is
      */
     function removeSupportedToken(address _token) external onlyOwner {
         supportedTokens[_token] = false;
+        emit SupportedTokenRemoved(_token);
     }
 
     /// @notice Pause all contract operations (emergency circuit breaker)
@@ -207,7 +206,6 @@ contract DariSubscriptions is
         // Index for lookups
         subscriberSubs[subscriber].push(subscriptionId);
         merchantSubs[merchant].push(subscriptionId);
-        _subIndexed[subscriptionId] = true;
 
         emit SubscriptionCreated(
             subscriptionId,
@@ -269,13 +267,14 @@ contract DariSubscriptions is
 
     /**
      * @notice Cancel a subscription
-     * @dev Callable by subscriber, merchant, or relayer (on behalf of either)
+     * @dev Callable by subscriber, merchant, relayer, or owner.
+     *      Intentionally NOT gated by whenNotPaused so users can always
+     *      exit their subscriptions, even during an emergency pause.
      * @param subscriptionId The subscription to cancel
      */
     function cancelSubscription(uint256 subscriptionId)
         external
         override
-        whenNotPaused
         nonReentrant
     {
         SubscriptionData storage sub = subscriptions[subscriptionId];
@@ -387,6 +386,7 @@ contract DariSubscriptions is
     function getSubscriberSubscriptions(address subscriber)
         external
         view
+        override
         returns (uint256[] memory)
     {
         return subscriberSubs[subscriber];
@@ -400,6 +400,7 @@ contract DariSubscriptions is
     function getMerchantSubscriptions(address merchant)
         external
         view
+        override
         returns (uint256[] memory)
     {
         return merchantSubs[merchant];
@@ -413,6 +414,7 @@ contract DariSubscriptions is
     function checkAllowance(uint256 subscriptionId)
         external
         view
+        override
         returns (uint256)
     {
         SubscriptionData storage sub = subscriptions[subscriptionId];
@@ -427,6 +429,7 @@ contract DariSubscriptions is
     function checkBalance(uint256 subscriptionId)
         external
         view
+        override
         returns (uint256)
     {
         SubscriptionData storage sub = subscriptions[subscriptionId];

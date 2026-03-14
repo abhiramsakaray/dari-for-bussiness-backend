@@ -4,12 +4,13 @@ Recurring payment management for merchants
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, cast, String
 import secrets
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional, List
+from urllib.parse import urlencode
 
 from app.core.database import get_db
 from app.core import require_merchant
@@ -24,8 +25,14 @@ from app.schemas.schemas import (
     SubscriptionCreate, RecurringSubscriptionResponse, SubscriptionList, SubscriptionCancel,
     SubscriptionStatus, SubscriptionInterval
 )
+from app.services.currency_service import convert_local_to_usdc
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
+
+
+def _status_value(status_obj) -> str:
+    """Return lowercase enum value regardless of enum-or-string input."""
+    return status_obj.value if hasattr(status_obj, "value") else str(status_obj)
 
 
 def _get_subscribe_url(request: Request, plan_id: str) -> str:
@@ -156,6 +163,60 @@ async def get_plan(
     return build_plan_response(plan, db, request)
 
 
+@router.get("/plans/{plan_id}/share-link")
+async def get_plan_share_link(
+    plan_id: str,
+    request: Request,
+    source: Optional[str] = Query(default=None, description="Source tag, e.g. website, email, campaign"),
+    customer_id: Optional[str] = Query(default=None, description="Merchant customer identifier"),
+    return_url: Optional[str] = Query(default=None, description="Return URL when no immediate checkout is required"),
+    success_url: Optional[str] = Query(default=None, description="Checkout success redirect URL"),
+    cancel_url: Optional[str] = Query(default=None, description="Checkout cancel redirect URL"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant)
+):
+    """
+    Generate a shareable hosted subscription page URL for frontend use.
+
+    This link is meant to be embedded in your website, pricing cards,
+    email campaigns, and CTA buttons to redirect users to ChainPe's
+    hosted subscription approval flow.
+    """
+    plan = db.query(SubscriptionPlan).filter(
+        and_(
+            SubscriptionPlan.id == plan_id,
+            SubscriptionPlan.merchant_id == uuid.UUID(current_user["id"]),
+        )
+    ).first()
+
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    base_link = _get_subscribe_url(request, plan.id)
+    query_params = {
+        "source": source,
+        "customer_id": customer_id,
+        "return_url": return_url,
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+    }
+    query_params = {k: v for k, v in query_params.items() if v}
+
+    subscribe_url = f"{base_link}?{urlencode(query_params)}" if query_params else base_link
+
+    return {
+        "plan_id": plan.id,
+        "plan_name": plan.name,
+        "subscribe_url": subscribe_url,
+        "base_subscribe_url": base_link,
+        "query_params": query_params,
+        "integration": {
+            "button_text": f"Subscribe to {plan.name}",
+            "html_anchor": f"<a href=\"{subscribe_url}\">Subscribe to {plan.name}</a>",
+        },
+    }
+
+
 @router.patch("/plans/{plan_id}", response_model=SubscriptionPlanResponse)
 async def update_plan(
     plan_id: str,
@@ -253,11 +314,11 @@ async def create_subscription(
         and_(
             Subscription.plan_id == plan.id,
             Subscription.customer_email == sub_data.customer_email,
-            Subscription.status.in_([
-                DBSubscriptionStatus.ACTIVE,
-                DBSubscriptionStatus.PENDING_PAYMENT,
-                DBSubscriptionStatus.TRIALING,
-                DBSubscriptionStatus.PAST_DUE
+            cast(Subscription.status, String).in_([
+                DBSubscriptionStatus.ACTIVE.value,
+                DBSubscriptionStatus.PENDING_PAYMENT.value,
+                DBSubscriptionStatus.TRIALING.value,
+                DBSubscriptionStatus.PAST_DUE.value,
             ])
         )
     ).first()
@@ -299,7 +360,7 @@ async def create_subscription(
         customer_email=sub_data.customer_email,
         customer_name=sub_data.customer_name,
         customer_id=sub_data.customer_id,
-        status=initial_status,
+        status=initial_status.value,
         current_period_start=period_start,
         current_period_end=period_end,
         billing_anchor=now,
@@ -358,7 +419,7 @@ async def list_subscriptions(
     query = db.query(Subscription)
     
     if status:
-        query = query.filter(Subscription.status == status.value)
+        query = query.filter(cast(Subscription.status, String) == status.value)
     
     if plan_id:
         query = query.filter(Subscription.plan_id == plan_id)
@@ -421,14 +482,14 @@ async def cancel_subscription(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status == DBSubscriptionStatus.CANCELLED:
+    if _status_value(subscription.status) == DBSubscriptionStatus.CANCELLED.value:
         raise HTTPException(status_code=400, detail="Subscription already cancelled")
     
     subscription.cancelled_at = datetime.utcnow()
     subscription.cancel_reason = cancel_data.reason
     
     if cancel_data.cancel_immediately:
-        subscription.status = DBSubscriptionStatus.CANCELLED
+        subscription.status = DBSubscriptionStatus.CANCELLED.value
         subscription.cancel_at = datetime.utcnow()
     else:
         # Cancel at end of current period
@@ -465,13 +526,16 @@ async def pause_subscription(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status not in [DBSubscriptionStatus.ACTIVE, DBSubscriptionStatus.TRIALING]:
+    if _status_value(subscription.status) not in [
+        DBSubscriptionStatus.ACTIVE.value,
+        DBSubscriptionStatus.TRIALING.value,
+    ]:
         raise HTTPException(
             status_code=400,
             detail="Can only pause active or trialing subscriptions"
         )
     
-    subscription.status = DBSubscriptionStatus.PAUSED
+    subscription.status = DBSubscriptionStatus.PAUSED.value
     subscription.updated_at = datetime.utcnow()
     db.commit()
     
@@ -500,7 +564,7 @@ async def resume_subscription(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status != DBSubscriptionStatus.PAUSED:
+    if _status_value(subscription.status) != DBSubscriptionStatus.PAUSED.value:
         raise HTTPException(
             status_code=400,
             detail="Can only resume paused subscriptions"
@@ -515,7 +579,7 @@ async def resume_subscription(
     subscription.current_period_end = calculate_next_billing_date(
         now, interval_value, plan.interval_count
     )
-    subscription.status = DBSubscriptionStatus.ACTIVE
+    subscription.status = DBSubscriptionStatus.ACTIVE.value
     subscription.next_payment_at = now
     subscription.updated_at = now
     
@@ -599,7 +663,7 @@ async def extend_trial(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status != DBSubscriptionStatus.TRIALING:
+    if _status_value(subscription.status) != DBSubscriptionStatus.TRIALING.value:
         raise HTTPException(
             status_code=400,
             detail="Can only extend trial for subscriptions in trialing status"
@@ -646,7 +710,7 @@ async def end_trial_early(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status != DBSubscriptionStatus.TRIALING:
+    if _status_value(subscription.status) != DBSubscriptionStatus.TRIALING.value:
         raise HTTPException(
             status_code=400,
             detail="Can only end trial for subscriptions in trialing status"
@@ -657,7 +721,7 @@ async def end_trial_early(
     
     interval_value = plan.interval.value if hasattr(plan.interval, 'value') else plan.interval
     
-    subscription.status = DBSubscriptionStatus.ACTIVE
+    subscription.status = DBSubscriptionStatus.ACTIVE.value
     subscription.trial_converted_at = now
     subscription.current_period_start = now
     subscription.current_period_end = calculate_next_billing_date(now, interval_value, plan.interval_count)
@@ -716,7 +780,7 @@ async def update_payment_method(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status == DBSubscriptionStatus.CANCELLED:
+    if _status_value(subscription.status) == DBSubscriptionStatus.CANCELLED.value:
         raise HTTPException(status_code=400, detail="Cannot update payment method for cancelled subscription")
     
     subscription.customer_wallet_address = wallet_address
@@ -763,10 +827,13 @@ async def collect_subscription_payment(
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    if subscription.status not in [DBSubscriptionStatus.ACTIVE, DBSubscriptionStatus.PAST_DUE]:
+    if _status_value(subscription.status) not in [
+        DBSubscriptionStatus.ACTIVE.value,
+        DBSubscriptionStatus.PAST_DUE.value,
+    ]:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot collect payment for subscription with status: {subscription.status.value}"
+            detail=f"Cannot collect payment for subscription with status: {_status_value(subscription.status)}"
         )
     
     plan = subscription.plan
@@ -802,8 +869,8 @@ async def collect_subscription_payment(
         merchant_id=subscription.merchant_id,
         amount_fiat=plan.amount,
         fiat_currency=plan.fiat_currency,
-        amount_token=str(plan.amount),
-        amount_usdc=str(plan.amount),
+        amount_token="0",
+        amount_usdc="0",
         token=subscription.customer_token or (plan.accepted_tokens[0] if plan.accepted_tokens else "USDC"),
         chain=subscription.customer_chain or (plan.accepted_chains[0] if plan.accepted_chains else "stellar"),
         accepted_tokens=plan.accepted_tokens,
@@ -823,6 +890,15 @@ async def collect_subscription_payment(
         payer_email=subscription.customer_email,
         payer_name=subscription.customer_name,
     )
+
+    fiat_currency = (plan.fiat_currency or "USD").upper()
+    converted_usdc = float(plan.amount)
+    if fiat_currency != "USD":
+        converted_usdc, _rate = await convert_local_to_usdc(float(plan.amount), fiat_currency)
+
+    payment_session.fiat_currency = fiat_currency
+    payment_session.amount_usdc = str(converted_usdc)
+    payment_session.amount_token = str(converted_usdc)
     
     # Set merchant wallet if customer has preferred chain
     if subscription.customer_chain:

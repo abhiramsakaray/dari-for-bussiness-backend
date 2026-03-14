@@ -125,6 +125,37 @@
         .info-box li {
             margin-bottom: 5px;
         }
+
+        .subscription-box {
+            margin-top: 24px;
+            padding: 18px;
+            background: #eef6ff;
+            border: 1px solid #dbeafe;
+            border-radius: 8px;
+        }
+
+        .subscription-box input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        .subscription-box button {
+            background: #1d4ed8;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .subscription-box button:hover {
+            background: #1e40af;
+        }
     </style>
 </head>
 <body>
@@ -163,6 +194,13 @@
                 <li>✅ No chargebacks or fraud risk</li>
             </ul>
         </div>
+
+        <div class="subscription-box">
+            <h4>🔁 Hosted Subscription Page</h4>
+            <p style="color:#475569;margin-top:6px;">Use the same hosted ChainPe page for plan selection and customer approval.</p>
+            <input type="text" id="planId" placeholder="Enter plan ID (e.g. plan_xxxxx)">
+            <button onclick="goToHostedSubscription()">Open Subscription Page</button>
+        </div>
     </div>
     
     <script>
@@ -182,6 +220,17 @@
         });
         
         console.log('ChainPe button initialized! 🎉');
+
+        function goToHostedSubscription() {
+            const planId = document.getElementById('planId').value.trim();
+            if (!planId) {
+                alert('Please enter a plan ID');
+                return;
+            }
+
+            const redirect = encodeURIComponent(window.location.href);
+            window.location.href = `/subscribe/${planId}?source=demo_html&return_url=${redirect}`;
+        }
     </script>
 </body>
 </html>

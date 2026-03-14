@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
+from web3 import Web3
 
 from app.models.models import (
     Web3Subscription, Web3SubscriptionStatus,
@@ -37,6 +38,24 @@ INTERVAL_SECONDS = {
     "yearly": 31536000,       # 365 days
 }
 
+TOKEN_ADDRESS_SETTINGS = {
+    "ethereum": {
+        "USDC": "ETHEREUM_USDC_ADDRESS",
+        "USDT": "ETHEREUM_USDT_ADDRESS",
+    },
+    "polygon": {
+        "USDC": "POLYGON_USDC_ADDRESS",
+        "USDT": "POLYGON_USDT_ADDRESS",
+    },
+    "base": {
+        "USDC": "BASE_USDC_ADDRESS",
+    },
+    "arbitrum": {
+        "USDC": "ARBITRUM_USDC_ADDRESS",
+        "USDT": "ARBITRUM_USDT_ADDRESS",
+    },
+}
+
 # Chain to contract address mapping
 def _get_contract_address(chain: str) -> str:
     """Get subscription contract address for a chain"""
@@ -45,6 +64,27 @@ def _get_contract_address(chain: str) -> str:
     if not address:
         raise ValueError(f"No contract address configured for chain: {chain}")
     return address
+
+
+def _resolve_token_address(chain: str, token_symbol: str, token_address: str) -> str:
+    """Resolve token address from explicit input or settings defaults."""
+    if token_address:
+        return token_address
+
+    setting_name = TOKEN_ADDRESS_SETTINGS.get(chain, {}).get(token_symbol.upper())
+    if not setting_name:
+        raise ValueError(
+            f"Unsupported token {token_symbol} for chain {chain}. "
+            "Provide token_address explicitly."
+        )
+
+    resolved = getattr(settings, setting_name, "")
+    if not resolved:
+        raise ValueError(
+            f"No token address configured for {chain}/{token_symbol}. "
+            f"Missing env: {setting_name}"
+        )
+    return resolved
 
 
 class Web3SubscriptionService:
@@ -95,7 +135,21 @@ class Web3SubscriptionService:
           4. Store subscription in database
           5. Emit event for webhooks
         """
-        # Get merchant
+        # Resolve plan and merchant
+        plan = None
+        if plan_id:
+            plan = self.db.query(SubscriptionPlan).get(plan_id)
+            if not plan:
+                raise ValueError("Plan not found")
+            merchant_id = str(plan.merchant_id)
+            amount = float(plan.amount)
+            interval = plan.interval.value if hasattr(plan.interval, 'value') else plan.interval
+            if max_payments is None and plan.max_billing_cycles:
+                max_payments = int(plan.max_billing_cycles)
+
+        if not merchant_id:
+            raise ValueError("merchant_id is required when plan_id is not provided")
+
         merchant = self.db.query(Merchant).get(merchant_id)
         if not merchant:
             raise ValueError("Merchant not found")
@@ -115,14 +169,19 @@ class Web3SubscriptionService:
 
         merchant_address = merchant_wallet.wallet_address
 
-        # Resolve plan details
-        if plan_id:
-            plan = self.db.query(SubscriptionPlan).get(plan_id)
-            if not plan:
-                raise ValueError("Plan not found")
-            amount = float(plan.amount)
-            interval = plan.interval.value if hasattr(plan.interval, 'value') else plan.interval
-            token_symbol = "USDC"  # Default
+        # Validate amount and resolve token address
+        if amount <= 0:
+            raise ValueError("Amount must be greater than zero")
+
+        token_address = _resolve_token_address(chain, token_symbol, token_address)
+
+        # Validate address formats early for clearer API errors
+        if not Web3.is_address(subscriber_address):
+            raise ValueError("Invalid subscriber wallet address")
+        if not Web3.is_address(token_address):
+            raise ValueError("Invalid token contract address")
+        if not Web3.is_address(merchant_address):
+            raise ValueError("Invalid merchant wallet address")
 
         # Convert interval to seconds
         interval_seconds = INTERVAL_SECONDS.get(interval)
@@ -198,7 +257,9 @@ class Web3SubscriptionService:
             interval_seconds=interval_seconds,
             next_payment_at=datetime.utcfromtimestamp(start_time),
             status=Web3SubscriptionStatus.ACTIVE,
-            plan_id=plan_id,
+            # Keep this nullable for compatibility with existing schema where
+            # web3_subscriptions.plan_id may be UUID while plan IDs are strings.
+            plan_id=None,
             merchant_id=merchant_id,
             mandate_id=mandate.id,
             created_tx_hash=result.get("tx_hash"),

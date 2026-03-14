@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
 /**
  * @title IDariSubscriptions
  * @notice Interface for the Dari for Business subscription contract
@@ -15,16 +8,16 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 interface IDariSubscriptions {
     // ============= STRUCTS =============
 
-    /// @notice Gas-optimized subscription data (packed into 2 storage slots)
+    /// @notice Gas-optimized subscription data (packed into 4 storage slots)
     struct SubscriptionData {
         address subscriber;       // slot 1: 20 bytes
         uint64  interval;         // slot 1: 8 bytes  (max ~584 billion seconds)
-        bool    active;           // slot 1: 1 byte
+        bool    active;           // slot 1: 1 byte   (3 bytes padding)
         address merchant;         // slot 2: 20 bytes
         uint64  nextPayment;      // slot 2: 8 bytes
         uint32  paymentCount;     // slot 2: 4 bytes
-        address token;            // slot 3: 20 bytes
-        uint128 amount;           // slot 3: 16 bytes (max ~340 undecillion)
+        address token;            // slot 3: 20 bytes (12 bytes padding)
+        uint128 amount;           // slot 4: 16 bytes (address+uint128=36>32, spills to slot 4)
     }
 
     // ============= EVENTS =============
@@ -64,6 +57,10 @@ interface IDariSubscriptions {
 
     event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
 
+    event SupportedTokenAdded(address indexed token);
+
+    event SupportedTokenRemoved(address indexed token);
+
     // ============= FUNCTIONS =============
 
     function createSubscription(
@@ -90,4 +87,12 @@ interface IDariSubscriptions {
     function isPaymentDue(uint256 subscriptionId) external view returns (bool);
 
     function getSubscriptionCount() external view returns (uint256);
+
+    function getSubscriberSubscriptions(address subscriber) external view returns (uint256[] memory);
+
+    function getMerchantSubscriptions(address merchant) external view returns (uint256[] memory);
+
+    function checkAllowance(uint256 subscriptionId) external view returns (uint256);
+
+    function checkBalance(uint256 subscriptionId) external view returns (uint256);
 }

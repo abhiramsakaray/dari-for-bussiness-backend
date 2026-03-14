@@ -64,6 +64,7 @@ class CreateWeb3SubscriptionRequest(BaseModel):
     signature: str = Field(..., description="EIP-712 signature from user's wallet")
     subscriber_address: str = Field(..., description="Subscriber wallet address")
     nonce: int = Field(default=0, description="Mandate nonce")
+    merchant_id: Optional[str] = Field(None, description="Dari merchant UUID (required when plan_id is not provided)")
 
     # Plan or custom billing
     plan_id: Optional[str] = Field(None, description="Subscription plan ID")

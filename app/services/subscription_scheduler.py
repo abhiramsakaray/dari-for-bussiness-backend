@@ -28,6 +28,7 @@ from app.models.models import (
 )
 from app.services.gasless_relayer import relayer
 from app.services.event_queue import EventService
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -240,17 +241,18 @@ class SubscriptionScheduler:
     ):
         """Handle a failed payment with retry logic"""
         payment.status = PaymentStatus.FAILED
-        payment.failed_at = datetime.utcnow()
 
         sub.failed_payment_count += 1
-        sub.last_retry_at = datetime.utcnow()
+        max_retries = max(1, int(getattr(settings, "SCHEDULER_MAX_RETRIES", 6)))
+        retry_interval_hours = max(
+            1, int(getattr(settings, "SCHEDULER_RETRY_INTERVAL_HOURS", 12))
+        )
 
-        if sub.failed_payment_count >= sub.max_retries:
-            # Max retries exceeded → mark as FAILED
-            sub.status = Web3SubscriptionStatus.FAILED
-            sub.next_retry_at = None
+        if sub.failed_payment_count >= max_retries:
+            # Max retries exceeded → mark as EXPIRED (terminal state in current enum)
+            sub.status = Web3SubscriptionStatus.EXPIRED
             logger.error(
-                f"❌ Subscription {sub.id} FAILED after {sub.failed_payment_count} retries"
+                f"❌ Subscription {sub.id} EXPIRED after {sub.failed_payment_count} retries"
             )
 
             # Emit failure event
@@ -264,6 +266,7 @@ class SubscriptionScheduler:
                     payload={
                         "subscription_id": str(sub.id),
                         "failed_count": sub.failed_payment_count,
+                        "max_retries": max_retries,
                         "error": error[:200],
                     },
                 )
@@ -273,14 +276,12 @@ class SubscriptionScheduler:
         else:
             # Schedule retry
             sub.status = Web3SubscriptionStatus.PAST_DUE
-            sub.next_retry_at = datetime.utcnow() + timedelta(
-                hours=sub.retry_interval_hours
-            )
             logger.warning(
                 f"⚠️  Payment failed for sub {sub.id} "
-                f"(attempt {sub.failed_payment_count}/{sub.max_retries}), "
-                f"retry at {sub.next_retry_at}"
+                f"(attempt {sub.failed_payment_count}/{max_retries}), "
+                f"retry after {retry_interval_hours}h"
             )
+            sub.next_payment_at = datetime.utcnow() + timedelta(hours=retry_interval_hours)
 
         sub.updated_at = datetime.utcnow()
 

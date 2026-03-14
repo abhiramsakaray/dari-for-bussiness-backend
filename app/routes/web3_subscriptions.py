@@ -144,7 +144,7 @@ async def authorize_subscription(
         sub = await service.create_subscription(
             signature=request.signature,
             subscriber_address=request.subscriber_address,
-            merchant_id=request.plan_id.split("_")[0] if request.plan_id else "",  # Extract from plan
+            merchant_id=request.merchant_id or "",
             plan_id=request.plan_id,
             token_address=request.token_address,
             token_symbol=request.token_symbol.value,

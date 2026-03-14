@@ -196,6 +196,38 @@ async def convert_usdc_to_local(
         return amount_usdc, 1.0
 
 
+async def convert_local_to_usdc(
+    amount_local: float,
+    currency_code: str,
+) -> Tuple[float, float]:
+    """
+    Convert local fiat amount to USDC.
+
+    Returns (amount_usdc, exchange_rate).
+    exchange_rate = local units per 1 USD/USDC.
+    """
+    if currency_code == "USD":
+        return amount_local, 1.0
+
+    try:
+        price_service = get_price_service()
+        # rate is local units per 1 USD
+        rate = await price_service.get_fiat_rate("USD", currency_code)
+        if not rate or rate <= 0:
+            raise ValueError(f"Invalid rate for {currency_code}: {rate}")
+
+        usdc_amount = float(
+            (Decimal(str(amount_local)) / rate).quantize(
+                Decimal("0.00000001"), rounding=ROUND_HALF_UP
+            )
+        )
+        return usdc_amount, float(rate)
+    except Exception as e:
+        logger.error(f"Local->USDC conversion error ({currency_code}): {e}")
+        # Safe fallback keeps prior behavior
+        return amount_local, 1.0
+
+
 async def build_local_amount(
     amount_usdc: float,
     currency_code: str,

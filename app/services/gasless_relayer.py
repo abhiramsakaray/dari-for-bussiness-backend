@@ -129,7 +129,7 @@ CHAIN_CONFIG = {
         "is_poa": True,
     },
     "arbitrum": {
-        "rpc_url_setting": "SUBSCRIPTION_CONTRACT_ARBITRUM",
+        "rpc_url_setting": "ARBITRUM_MAINNET_RPC_URL",
         "chain_id_setting": None,
         "contract_setting": "SUBSCRIPTION_CONTRACT_ARBITRUM",
         "is_poa": True,
