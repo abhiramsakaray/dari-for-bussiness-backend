@@ -70,7 +70,9 @@ class CreateWeb3SubscriptionRequest(BaseModel):
     plan_id: Optional[str] = Field(None, description="Subscription plan ID")
     token_address: str = Field(default="", description="ERC20 token contract address")
     token_symbol: Web3TokenEnum = Field(default=Web3TokenEnum.USDC)
-    amount: Optional[float] = Field(None, gt=0, description="Payment amount")
+    amount: Optional[float] = Field(None, gt=0, description="Payment amount (human-readable)")
+    # amount_raw: exact integer used in the signed EIP-712 typed data (avoids float rounding)
+    amount_raw: Optional[int] = Field(None, gt=0, description="Amount in token decimals (exact value used when signing)")
     interval: IntervalEnum = Field(default=IntervalEnum.MONTHLY)
 
     # Chain

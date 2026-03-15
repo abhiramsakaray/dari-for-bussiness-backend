@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import logging
 
+from app.models.models import MerchantWallet
+
 from app.core.database import get_db
 from app.core import require_merchant
 from app.schemas.web3_schemas import (
@@ -101,17 +103,37 @@ async def get_mandate_signing_data(
     The frontend should present this to the user's wallet for signing.
     Returns the complete EIP-712 structure for eth_signTypedData_v4.
     """
+    # Resolve the merchant's actual wallet address for this chain.
+    # CRITICAL: this MUST be the same address used during signature verification
+    # in verify_and_create_mandate(), otherwise the recovered signer will never
+    # match the expected subscriber.
+    chain_str = request.chain.value
+    merchant_wallet = (
+        db.query(MerchantWallet)
+        .filter(
+            MerchantWallet.merchant_id == request.merchant_id,
+            MerchantWallet.chain == chain_str,
+            MerchantWallet.is_active == True,
+        )
+        .first()
+    )
+    if not merchant_wallet:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Merchant has no active wallet on {chain_str}. "
+                   "Cannot generate signing data.",
+        )
+
     mandate_service = MandateService(db)
-    
     try:
         signing_data = mandate_service.get_signing_data(
             subscriber=request.subscriber,
-            merchant=request.merchant_id,
+            merchant=merchant_wallet.wallet_address,   # ← real address, not UUID
             token=request.token_address,
             amount=request.amount,
             interval=request.interval,
             max_payments=request.max_payments,
-            chain=request.chain.value,
+            chain=chain_str,
             chain_id=request.chain_id,
         )
         return signing_data
@@ -128,17 +150,20 @@ async def authorize_subscription(
 ):
     """
     Authorize and create a new Web3 subscription.
-    
+
     Flow:
     1. User signs EIP-712 mandate in their wallet
     2. Frontend submits signature + details to this endpoint
     3. Backend verifies signature, creates on-chain subscription via relayer
     4. Returns subscription details
-    
+
     The user must have already approved the subscription contract
     to spend their tokens (ERC20 approve).
     """
     service = Web3SubscriptionService(db)
+    # Pass the exact amount_raw used during signing to avoid float rounding issues
+    if request.amount_raw:
+        service._amount_raw_override = request.amount_raw
 
     try:
         sub = await service.create_subscription(
@@ -163,6 +188,65 @@ async def authorize_subscription(
     except Exception as e:
         logger.error(f"Subscription creation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Subscription creation failed")
+
+
+@router.post("/debug/verify-sig")
+async def debug_verify_signature(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Debug endpoint: attempt to recover the EIP-712 signer for a given signature.
+    Returns the recovered address so you can compare with what the frontend expects.
+
+    Required payload fields:
+      signature, subscriber, merchant_address, token_address,
+      amount_raw, interval_seconds, chain_id, chain (e.g. "polygon"),
+      verifying_contract, nonce
+    Optional:
+      max_payments (default 0)
+    """
+    from app.services.mandate_service import MandateService, DARI_DOMAIN_BASE
+    from web3 import Web3
+    try:
+        signature        = payload["signature"]
+        subscriber       = payload["subscriber"]
+        merchant_address = payload["merchant_address"]
+        token_address    = payload["token_address"]
+        amount_raw       = int(payload["amount_raw"])
+        interval_seconds = int(payload["interval_seconds"])
+        max_payments     = int(payload.get("max_payments", 0))
+        nonce            = int(payload["nonce"])
+        chain_id         = int(payload["chain_id"])
+        verifying_contract = payload["verifying_contract"]
+
+        domain_data = {
+            **DARI_DOMAIN_BASE,
+            "chainId": chain_id,
+            "verifyingContract": Web3.to_checksum_address(verifying_contract),
+        }
+        # chainId is NOT a struct field — it belongs to the domain only
+        message_data = {
+            "subscriber":  Web3.to_checksum_address(subscriber),
+            "merchant":    Web3.to_checksum_address(merchant_address),
+            "token":       Web3.to_checksum_address(token_address),
+            "amount":      amount_raw,
+            "interval":    interval_seconds,
+            "maxPayments": max_payments,
+            "nonce":       nonce,
+        }
+
+        svc = MandateService(db)
+        recovered = svc._recover_signer(signature, domain_data, message_data)
+        return {
+            "recovered": recovered,
+            "subscriber": subscriber,
+            "match": recovered.lower() == subscriber.lower(),
+            "domain": domain_data,
+            "message": message_data,
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ============= MERCHANT ENDPOINTS =============

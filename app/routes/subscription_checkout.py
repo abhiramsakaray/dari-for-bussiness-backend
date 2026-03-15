@@ -921,166 +921,159 @@ async def subscription_authorize_page(
         await requestWithTimeout('wallet_switchEthereumChain', [{{ chainId: targetHex }}], 20000);
   }}
 
+  // Helper: sign typed data with addr, and return the signature + the effective signer.
+  // On error 4100 (MetaMask active account != site-connected account), re-connects and retries once.
+  // Returns: {{ signature: string, signer: string }}
+  async function getSignature(addr, tData) {{
+      let sig;
+      let currentAddr = addr;
+      try {{
+          sig = await requestWithTimeout('eth_signTypedData_v4', [currentAddr, JSON.stringify(tData)], 30000);
+      }} catch (signErr) {{
+          if (Number(signErr && signErr.code) === 4100) {{
+              setStatus('Re-connecting wallet...');
+              setMsg('Your wallet account has changed. Please reconnect the site...');
+              try {{
+                  await requestWithTimeout('wallet_requestPermissions', [{{ eth_accounts: {{}} }}], 30000);
+              }} catch (_p) {{
+                  // wallet_requestPermissions unsupported or rejected — fall through
+              }}
+              const accs2 = await requestWithTimeout('eth_requestAccounts', undefined, 20000);
+              currentAddr = pickSignerAddress(accs2) || currentAddr;
+              
+              setStatus('Waiting for signature...');
+              setMsg(`Please confirm the signature with account ${{currentAddr}}...`);
+              sig = await requestWithTimeout('eth_signTypedData_v4', [currentAddr, JSON.stringify(tData)], 30000);
+          }} else {{
+              throw signErr;
+          }}
+      }}
+      // Recover actual signer from the signature
+      let signer = currentAddr;
+      try {{
+          signer = ethers.verifyTypedData(tData.domain, tData.types, tData.message, sig);
+      }} catch (_e) {{
+          // Recovery failed — trust currentAddr as signer
+      }}
+      return {{ signature: sig, signer }};
+  }}
+
+  async function buildSigningData(sub) {{
+      const payload = {{
+          subscriber: sub,
+          merchant_id: cfg.merchant_id,
+          token_address: cfg.token_address,
+          amount: cfg.amount_raw,
+          interval: cfg.interval_seconds,
+          max_payments: (cfg.max_payments && Number(cfg.max_payments) > 0) ? Number(cfg.max_payments) : 0,
+          chain: cfg.chain,
+          chain_id: cfg.chain_id,
+      }};
+      const res = await fetch('/web3-subscriptions/mandate/signing-data', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify(payload),
+      }});
+      const data = await res.json();
+      if (!res.ok) {{
+          const detail = Array.isArray(data.detail)
+              ? data.detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+              : (data.detail || 'Failed to prepare signing data');
+          throw new Error(detail);
+      }}
+      return data;
+  }}
+
   async function startAuthorization() {{
     const btn = document.getElementById('signBtn');
     btn.disabled = true;
     try {{
-            provider = resolveProvider();
-            if (!provider) throw new Error('No EVM wallet detected. Open this page in a wallet browser.');
+      provider = resolveProvider();
+      if (!provider) throw new Error('No EVM wallet detected. Open this page in a wallet browser.');
       if (!cfg) await loadConfig();
-
-            // Prompt wallet site permissions up front to reduce 4100 unauthorized errors.
-            try {{
-                await requestWithTimeout('wallet_requestPermissions', [{{ eth_accounts: {{}} }}], 15000);
-            }} catch (_permErr) {{
-                // Some wallets may not support this method; continue with eth_requestAccounts.
-            }}
 
       setStatus('Connecting wallet...');
       setMsg('Connecting wallet...');
-    const accounts = await requestWithTimeout('eth_requestAccounts', undefined, 20000);
-    let subscriber = pickSignerAddress(accounts);
+      const accounts = await requestWithTimeout('eth_requestAccounts', undefined, 20000);
+      let subscriber = pickSignerAddress(accounts);
       if (!subscriber) throw new Error('Wallet account not found');
 
       await ensureNetwork(cfg.chain_id);
 
+      // ── Step 1: get signing data for the reported subscriber ──
       setStatus('Preparing signature payload...');
       setMsg('Preparing signature payload...');
-            const signingPayload = {{
-                subscriber,
-                merchant_id: cfg.merchant_address,
-                token_address: cfg.token_address,
-                amount: cfg.amount_raw,
-                interval: cfg.interval_seconds,
-                max_payments: (cfg.max_payments && Number(cfg.max_payments) > 0) ? Number(cfg.max_payments) : 0,
-                chain: cfg.chain,
-                chain_id: cfg.chain_id,
-            }};
-            const signRes = await fetch('/web3-subscriptions/mandate/signing-data', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify(signingPayload)
-      }});
-            let signData = await signRes.json();
-            if (!signRes.ok) {{
-                let detailMessage = 'Failed to prepare signing data';
-                if (Array.isArray(signData.detail)) {{
-                    detailMessage = signData.detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
-                }} else if (typeof signData.detail === 'string') {{
-                    detailMessage = signData.detail;
-                }}
-                throw new Error(detailMessage);
-            }}
+      let signData = await buildSigningData(subscriber);
 
-      setStatus('Waiting for signature...');
-      setMsg('Please confirm the signature in your wallet...');
-      const typedData = {{
-        domain: signData.domain,
-        types: {{ ...signData.types }},
-        primaryType: signData.primaryType,
-        message: signData.message,
+      let typedData = {{
+          domain: signData.domain,
+          types: {{ ...signData.types }},
+          primaryType: signData.primaryType,
+          message: signData.message,
       }};
 
-            let signature = await requestWithTimeout('eth_signTypedData_v4', [subscriber, JSON.stringify(typedData)], 30000);
+      // ── Step 2: sign (with auto-retry on 4100) ──
+      setStatus('Waiting for signature...');
+      setMsg('Please confirm the signature in your wallet...');
+      let {{ signature, signer }} = await getSignature(subscriber, typedData);
 
-            // Some wallets may sign with a different active account than eth_requestAccounts returned.
-            // Detect and recover automatically by regenerating typed data for recovered signer.
-            let recovered = '';
-            try {{
-                recovered = ethers.verifyTypedData(signData.domain, signData.types, signData.message, signature);
-            }} catch (_e) {{
-                recovered = '';
-            }}
+      // ── Step 3: if actual signer differs from the address we used, fetch fresh signing data ──
+      if (signer.toLowerCase() !== subscriber.toLowerCase()) {{
+          subscriber = signer;
+          setStatus('Adjusting for active account...');
+          setMsg(`Active account is ${{subscriber}}. Fetching corrected signing data...`);
+          signData = await buildSigningData(subscriber);
+          typedData = {{
+              domain: signData.domain,
+              types: {{ ...signData.types }},
+              primaryType: signData.primaryType,
+              message: signData.message,
+          }};
+          setStatus('Waiting for corrected signature...');
+          setMsg(`Please sign once more with account ${{subscriber}}.`);
+          ({{ signature, signer }} = await getSignature(subscriber, typedData));
+          subscriber = signer; // use final recovered signer
+      }}
 
-            if (recovered && recovered.toLowerCase() !== subscriber.toLowerCase()) {{
-                setStatus('Account mismatch detected...');
-                setMsg(`Wallet signed with ${{recovered}}. Re-preparing mandate for this signer and requesting one corrected signature...`);
-
-                const accounts2 = await requestWithTimeout('eth_requestAccounts', undefined, 20000);
-                const hasRecovered = Array.isArray(accounts2) && accounts2.some((a) => String(a).toLowerCase() === recovered.toLowerCase());
-                if (!hasRecovered) {{
-                    throw new Error(`Wallet signed with ${{recovered}}, but this account is not connected for this site. In wallet: switch to ${{recovered}} and reconnect site, then retry.`);
-                }}
-                subscriber = recovered;
-
-                const correctedPayload = {{
-                    subscriber,
-                    merchant_id: cfg.merchant_address,
-                    token_address: cfg.token_address,
-                    amount: cfg.amount_raw,
-                    interval: cfg.interval_seconds,
-                    max_payments: (cfg.max_payments && Number(cfg.max_payments) > 0) ? Number(cfg.max_payments) : 0,
-                    chain: cfg.chain,
-                    chain_id: cfg.chain_id,
-                }};
-
-                const correctedRes = await fetch('/web3-subscriptions/mandate/signing-data', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify(correctedPayload)
-                }});
-                const correctedData = await correctedRes.json();
-                if (!correctedRes.ok) {{
-                    let detailMessage = 'Failed to prepare corrected signing data';
-                    if (Array.isArray(correctedData.detail)) {{
-                        detailMessage = correctedData.detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
-                    }} else if (typeof correctedData.detail === 'string') {{
-                        detailMessage = correctedData.detail;
-                    }}
-                    throw new Error(detailMessage);
-                }}
-
-                signData = correctedData;
-                const correctedTypedData = {{
-                    domain: signData.domain,
-                    types: {{ ...signData.types }},
-                    primaryType: signData.primaryType,
-                    message: signData.message,
-                }};
-                setStatus('Waiting for corrected signature...');
-                setMsg(`Please sign once more with active account ${{subscriber}}.`);
-                signature = await requestWithTimeout('eth_signTypedData_v4', [subscriber, JSON.stringify(correctedTypedData)], 30000);
-            }}
-
+      // ── Step 4: submit authorization ──
       setStatus('Creating subscription...');
       setMsg('Creating on-chain subscription...');
-            const authorizePayload = {{
-                signature,
-                subscriber_address: subscriber,
-                nonce: signData.nonce,
-                merchant_id: cfg.merchant_id,
-                token_address: cfg.token_address,
-                token_symbol: cfg.token_symbol,
-                amount: cfg.amount,
-                interval: cfg.interval,
-                chain: cfg.chain,
-                chain_id: cfg.chain_id,
-                customer_email: cfg.customer_email,
-                customer_name: cfg.customer_name,
-            }};
-            if (cfg.max_payments && Number(cfg.max_payments) > 0) {{
-                authorizePayload.max_payments = Number(cfg.max_payments);
-            }}
+      const authorizePayload = {{
+          signature,
+          subscriber_address: subscriber,
+          nonce: signData.nonce,
+          merchant_id: cfg.merchant_id,
+          plan_id: cfg.plan_id,
+          token_address: cfg.token_address,
+          token_symbol: cfg.token_symbol,
+          amount: cfg.amount,
+          amount_raw: cfg.amount_raw,
+          interval: cfg.interval,
+          chain: cfg.chain,
+          chain_id: cfg.chain_id,
+          customer_email: cfg.customer_email,
+          customer_name: cfg.customer_name,
+      }};
+      if (cfg.max_payments && Number(cfg.max_payments) > 0) {{
+          authorizePayload.max_payments = Number(cfg.max_payments);
+      }}
       const authRes = await fetch('/web3-subscriptions/authorize', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify(authorizePayload)
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify(authorizePayload),
       }});
       const authData = await authRes.json();
-            if (!authRes.ok) {{
-                let detailMessage = 'Subscription authorization failed';
-                if (Array.isArray(authData.detail)) {{
-                    detailMessage = authData.detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
-                }} else if (typeof authData.detail === 'string') {{
-                    detailMessage = authData.detail;
-                }}
-                throw new Error(detailMessage);
-            }}
+      if (!authRes.ok) {{
+          const detail = Array.isArray(authData.detail)
+              ? authData.detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+              : (authData.detail || 'Subscription authorization failed');
+          throw new Error(detail);
+      }}
 
       await fetch(`/subscribe/authorize/${{SUB_ID}}/complete`, {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ email: EMAIL, web3_subscription_id: authData.id }})
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ email: EMAIL, web3_subscription_id: authData.id }}),
       }});
 
       setStatus('Authorized');
@@ -1088,11 +1081,11 @@ async def subscription_authorize_page(
       setTimeout(() => {{ window.location.href = cfg.manage_url; }}, 700);
     }} catch (e) {{
       setStatus('Authorization failed');
-            const msg = formatErr(e);
-            setMsg(msg);
-            if (msg.toLowerCase().includes('timed out')) {{
-                showWalletHelp();
-            }}
+      const msg = formatErr(e);
+      setMsg(msg);
+      if (msg.toLowerCase().includes('timed out')) {{
+          showWalletHelp();
+      }}
     }} finally {{
       btn.disabled = false;
     }}
@@ -1167,6 +1160,7 @@ async def subscription_authorize_config(
     base_url = str(request.base_url).rstrip("/")
     return {
         "subscription_id": sub.id,
+        "plan_id": plan.id,
         "merchant_id": str(plan.merchant_id),
         "merchant_address": merchant_wallet,
         "customer_email": sub.customer_email,

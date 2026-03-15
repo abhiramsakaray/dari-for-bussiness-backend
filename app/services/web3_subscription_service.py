@@ -190,10 +190,21 @@ class Web3SubscriptionService:
 
         # Calculate token amount in decimals (USDC/USDT = 6 decimals)
         decimals = 6
-        amount_raw = int(amount * (10 ** decimals))
+        if hasattr(self, '_amount_raw_override') and self._amount_raw_override:
+            # Use the exact integer from the request (avoids float rounding)
+            amount_raw = self._amount_raw_override
+        else:
+            amount_raw = int(amount * (10 ** decimals))
 
         # Get contract address
         contract_address = _get_contract_address(chain)
+
+        logger.info(
+            f"Verifying mandate: subscriber={subscriber_address} "
+            f"merchant={merchant_address} token={token_address} "
+            f"amount_raw={amount_raw} interval={interval_seconds} "
+            f"max_payments={max_payments} nonce={nonce} chain_id={chain_id}"
+        )
 
         # Step 1: Verify mandate signature
         mandate = self.mandate_service.verify_and_create_mandate(

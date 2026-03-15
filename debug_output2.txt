@@ -1,0 +1,2 @@
+Domain: {"name": "Dari Subscriptions", "version": "1", "chainId": 80002}
+Message: {"subscriber": "0xebFc88030cdC362b2001612b6E050Cdda2dAF8AB", "merchant": "0x2213f95CFC5cE646Fe282AD6fE3076fA9476ebD7", "token": "0x8B0180f2101c8260d49339abfEe87927412494B4", "amount": 1080497, "interval": 2592000, "maxPayments": 0, "nonce": 0, "chainId": 80002}
