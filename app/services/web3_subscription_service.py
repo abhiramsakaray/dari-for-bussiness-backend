@@ -276,6 +276,8 @@ class Web3SubscriptionService:
             created_tx_hash=result.get("tx_hash"),
             customer_email=customer_email,
             customer_name=customer_name,
+            max_retries=0, # Required non-null field
+            retry_interval_hours=24, # Required non-null field
         )
 
         self.db.add(subscription)

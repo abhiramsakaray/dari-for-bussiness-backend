@@ -1203,6 +1203,8 @@ class Web3Subscription(Base):
     customer_email = Column(String(255), nullable=True)
     customer_name = Column(String(255), nullable=True)
     failed_payment_count = Column(Integer, nullable=False, default=0)
+    max_retries = Column(Integer, nullable=False, default=0)
+    retry_interval_hours = Column(Integer, nullable=False, default=24)
     total_payments = Column(Integer, nullable=False, default=0)
     total_amount_collected = Column(Numeric(precision=18, scale=8), nullable=False, default=0)
     cancelled_at = Column(DateTime, nullable=True)

@@ -1000,6 +1000,51 @@ async def subscription_authorize_page(
 
       await ensureNetwork(cfg.chain_id);
 
+      // ── Step 0: Ensure ERC-20 Allowance ──
+      setStatus('Checking allowance...');
+      setMsg('Verifying USDC allowance for subscription...');
+      
+      const erc20Abi = [
+        "function allowance(address owner, address spender) view returns (uint256)",
+        "function approve(address spender, uint256 amount) returns (bool)"
+      ];
+      
+      const ethersProvider = new ethers.BrowserProvider(provider);
+      const tokenContract = new ethers.Contract(cfg.token_address, erc20Abi, ethersProvider);
+      
+      // Determine the correct contract address to approve. 
+      // The backend creates subscriptions on SUBSCRIPTION_CONTRACT_POLYGON for chainId 80002.
+      // Based on the user's config: 0xf6dE451A98764a5f08389e72F83AC7594E4e3045
+      const contractAddress = "0xf6dE451A98764a5f08389e72F83AC7594E4e3045";
+      const requiredAmount = BigInt(cfg.amount_raw);
+
+      const currentAllowance = await tokenContract.allowance(subscriber, contractAddress);
+      
+      if (currentAllowance < requiredAmount) {{
+          setStatus('Approval required...');
+          setMsg('Please approve USDC spend in your wallet...');
+          
+          const signer = await ethersProvider.getSigner();
+          const tokenWithSigner = tokenContract.connect(signer);
+          
+          try {{
+              // Send approve tx
+              const tx = await tokenWithSigner.approve(contractAddress, requiredAmount);
+              
+              setStatus('Approving USDC spend...');
+              setMsg('Waiting for approval transaction to confirm...');
+              
+              // Wait for confirmation
+              const receipt = await tx.wait();
+              if (receipt && receipt.status !== 1) {{
+                  throw new Error('Approval transaction failed on-chain');
+              }}
+          }} catch (appErr) {{
+              console.error("Approval error:", appErr);
+              throw new Error("Failed to approve token spend. " + (appErr.message || ""));
+          }}
+      }}
+
       // ── Step 1: get signing data for the reported subscriber ──
       setStatus('Preparing signature payload...');
       setMsg('Preparing signature payload...');
