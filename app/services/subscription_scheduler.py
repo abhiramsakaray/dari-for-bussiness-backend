@@ -101,10 +101,11 @@ class SubscriptionScheduler:
                 db.query(Web3Subscription)
                 .filter(
                     Web3Subscription.next_payment_at <= datetime.utcnow(),
-                    or_(
-                        Web3Subscription.status == Web3SubscriptionStatus.ACTIVE,
-                        Web3Subscription.status == Web3SubscriptionStatus.PAST_DUE,
-                    ),
+                    Web3Subscription.status.in_([
+                        Web3SubscriptionStatus.ACTIVE,
+                        Web3SubscriptionStatus.PAST_DUE,
+                        Web3SubscriptionStatus.PENDING_PAYMENT,
+                    ]),
                 )
                 .order_by(Web3Subscription.next_payment_at.asc())
                 .limit(self.batch_size)
@@ -147,10 +148,7 @@ class SubscriptionScheduler:
             logger.warning(f"Subscription {sub.id} has no on-chain ID, skipping")
             return
 
-        # Check if this is a retry and if we should retry yet
-        if sub.status == Web3SubscriptionStatus.PAST_DUE:
-            if sub.next_retry_at and datetime.utcnow() < sub.next_retry_at:
-                return  # Not time to retry yet
+        # Use next_payment_at for all scheduling, so no separate next_retry_at check is needed.
 
         # Create payment record
         payment = Web3SubscriptionPayment(
@@ -191,8 +189,6 @@ class SubscriptionScheduler:
                 )
                 sub.status = Web3SubscriptionStatus.ACTIVE
                 sub.failed_payment_count = 0
-                sub.last_retry_at = None
-                sub.next_retry_at = None
                 sub.updated_at = datetime.utcnow()
 
                 self.stats["total_payments_executed"] += 1
@@ -239,34 +235,48 @@ class SubscriptionScheduler:
         payment: Web3SubscriptionPayment,
         error: str,
     ):
-        """Handle a failed payment with retry logic"""
+        """Handle a failed payment with grace period + retry logic"""
         payment.status = PaymentStatus.FAILED
-
         sub.failed_payment_count += 1
-        max_retries = max(1, int(getattr(settings, "SCHEDULER_MAX_RETRIES", 6)))
+
         retry_interval_hours = max(
             1, int(getattr(settings, "SCHEDULER_RETRY_INTERVAL_HOURS", 12))
         )
 
-        if sub.failed_payment_count >= max_retries:
-            # Max retries exceeded → mark as EXPIRED (terminal state in current enum)
-            sub.status = Web3SubscriptionStatus.EXPIRED
-            logger.error(
-                f"❌ Subscription {sub.id} EXPIRED after {sub.failed_payment_count} retries"
+        # Determine effective grace period: sub-level setting, then global fallback
+        grace_period_days = (
+            sub.grace_period_days
+            if sub.grace_period_days is not None
+            else int(getattr(settings, "SCHEDULER_GRACE_PERIOD_DAYS", 3))
+        )
+        grace_period_hours = grace_period_days * 24
+
+        # How long has this subscription been past due?
+        first_failure_at = sub.next_payment_at or datetime.utcnow()
+        hours_past_due = (datetime.utcnow() - first_failure_at).total_seconds() / 3600
+
+        if hours_past_due >= grace_period_hours:
+            # Grace period exceeded → PAUSED (merchant can resume later)
+            sub.status = Web3SubscriptionStatus.PAUSED
+            sub.paused_at = datetime.utcnow()
+            logger.warning(
+                f"⏸️  Subscription {sub.id} PAUSED — grace period of "
+                f"{grace_period_days}d exceeded (past due {hours_past_due:.1f}h)"
             )
 
-            # Emit failure event
             try:
+                from app.services.event_queue import EventService
                 event_service = EventService(db)
                 event_service.create_event(
-                    event_type="subscription.failed",
+                    event_type="subscription.paused",
                     entity_type="web3_subscription",
                     entity_id=str(sub.id),
                     merchant_id=sub.merchant_id,
                     payload={
                         "subscription_id": str(sub.id),
-                        "failed_count": sub.failed_payment_count,
-                        "max_retries": max_retries,
+                        "reason": "grace_period_exceeded",
+                        "grace_period_days": grace_period_days,
+                        "hours_past_due": round(hours_past_due, 1),
                         "error": error[:200],
                     },
                 )
@@ -274,14 +284,14 @@ class SubscriptionScheduler:
                 pass
 
         else:
-            # Schedule retry
+            # Still within grace period — retry after retry_interval_hours
             sub.status = Web3SubscriptionStatus.PAST_DUE
+            sub.next_payment_at = datetime.utcnow() + timedelta(hours=retry_interval_hours)
             logger.warning(
                 f"⚠️  Payment failed for sub {sub.id} "
-                f"(attempt {sub.failed_payment_count}/{max_retries}), "
-                f"retry after {retry_interval_hours}h"
+                f"(attempt {sub.failed_payment_count}, grace {grace_period_days}d, "
+                f"past due {hours_past_due:.1f}h), retry in {retry_interval_hours}h"
             )
-            sub.next_payment_at = datetime.utcnow() + timedelta(hours=retry_interval_hours)
 
         sub.updated_at = datetime.utcnow()
 

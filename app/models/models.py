@@ -1129,8 +1129,10 @@ class PromoCodeUsage(Base):
 # ============= WEB3 SUBSCRIPTION ENUMS =============
 
 class Web3SubscriptionStatus(str, enum.Enum):
+    PENDING_PAYMENT = "pending_payment"  # Awaiting first payment before activation
     ACTIVE = "active"
     PAST_DUE = "past_due"
+    PAUSED = "paused"           # Suspended after grace period exceeded
     CANCELLED = "cancelled"
     EXPIRED = "expired"
 
@@ -1205,9 +1207,11 @@ class Web3Subscription(Base):
     failed_payment_count = Column(Integer, nullable=False, default=0)
     max_retries = Column(Integer, nullable=False, default=0)
     retry_interval_hours = Column(Integer, nullable=False, default=24)
+    grace_period_days = Column(Integer, nullable=True, default=3)  # Days to stay alive after payment failure before auto-pause
     total_payments = Column(Integer, nullable=False, default=0)
     total_amount_collected = Column(Numeric(precision=18, scale=8), nullable=False, default=0)
     cancelled_at = Column(DateTime, nullable=True)
+    paused_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

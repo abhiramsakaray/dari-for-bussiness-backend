@@ -256,10 +256,9 @@ class Web3SubscriptionService:
             pass
 
         # Use the actual startTime the relayer sent to the contract (fetched from chain).
-        # Falls back to the Python-clock-based start_time if not present.
         actual_start_time = result.get("start_time", start_time)
 
-        # Step 5: Store in database
+        # Step 5: Store in database — PENDING_PAYMENT until first charge confirms
         subscription = Web3Subscription(
             onchain_subscription_id=onchain_id,
             chain=chain,
@@ -271,23 +270,22 @@ class Web3SubscriptionService:
             amount=Decimal(str(amount)),
             interval_seconds=interval_seconds,
             next_payment_at=datetime.utcfromtimestamp(actual_start_time),
-            status=Web3SubscriptionStatus.ACTIVE,
-            # Keep this nullable for compatibility with existing schema where
-            # web3_subscriptions.plan_id may be UUID while plan IDs are strings.
+            status=Web3SubscriptionStatus.PENDING_PAYMENT,
             plan_id=None,
             merchant_id=merchant_id,
             mandate_id=mandate.id,
             created_tx_hash=result.get("tx_hash"),
             customer_email=customer_email,
             customer_name=customer_name,
-            max_retries=0, # Required non-null field
-            retry_interval_hours=24, # Required non-null field
+            max_retries=0,
+            retry_interval_hours=24,
+            grace_period_days=3,
         )
 
         self.db.add(subscription)
         self.db.flush()
 
-        # Step 6: Emit event
+        # Step 6: Emit created event
         try:
             event_service = EventService(self.db)
             event_service.create_event(
@@ -311,13 +309,77 @@ class Web3SubscriptionService:
         self.db.commit()
 
         logger.info(
-            f"✅ Web3 subscription created: {subscription.id} "
+            f"✅ Web3 subscription created (PENDING_PAYMENT): {subscription.id} "
             f"| subscriber={subscriber_address[:10]}... "
-            f"| amount={amount} {token_symbol} "
-            f"| chain={chain}"
+            f"| amount={amount} {token_symbol} | chain={chain}"
         )
 
+        # Step 7: Execute first payment IMMEDIATELY (don't wait for scheduler)
+        if onchain_id:
+            await self._execute_first_payment(subscription)
+
         return subscription
+
+    async def _execute_first_payment(self, subscription: "Web3Subscription"):
+        """
+        Execute the first subscription payment immediately after creation.
+        Sets status to ACTIVE on success, PAST_DUE on failure.
+        """
+        import asyncio
+        
+        # Calculate time remaining until the subscription's start time on-chain
+        # The relayer baked in a 120s buffer for 'safe_start_time' to avoid createSubscription reverts.
+        # We must wait until block.timestamp >= nextPayment to avoid PaymentNotDue() revert.
+        now_ts = int(datetime.utcnow().timestamp())
+        start_ts = int(subscription.next_payment_at.timestamp())
+        wait_seconds = max(5, start_ts - now_ts + 5) # Check if we need to wait for the 120s buffer, minimum 5s for indexing
+
+        logger.info(
+            f"⚡ Waiting {wait_seconds}s before first payment for sub {subscription.id} "
+            f"to pass the safe_start_time buffer (onchain_id={subscription.onchain_subscription_id})"
+        )
+        await asyncio.sleep(wait_seconds)
+        try:
+            pay_result = await relayer.execute_payment(
+                chain=subscription.chain,
+                onchain_subscription_id=subscription.onchain_subscription_id,
+                db=self.db,
+                subscription_id=subscription.id,
+            )
+
+            if pay_result.get("status") == "confirmed":
+                subscription.status = Web3SubscriptionStatus.ACTIVE
+                subscription.total_payments = 1
+                subscription.total_amount_collected = subscription.amount
+                subscription.next_payment_at = datetime.utcnow() + timedelta(
+                    seconds=subscription.interval_seconds
+                )
+                subscription.updated_at = datetime.utcnow()
+                self.db.commit()
+                logger.info(
+                    f"✅ First payment confirmed for sub {subscription.id} | "
+                    f"tx={pay_result.get('tx_hash', '')[:16]}... | status→ACTIVE"
+                )
+            else:
+                subscription.status = Web3SubscriptionStatus.PAST_DUE
+                subscription.failed_payment_count = 1
+                subscription.updated_at = datetime.utcnow()
+                self.db.commit()
+                logger.warning(
+                    f"⚠️  First payment reverted for sub {subscription.id} → PAST_DUE"
+                )
+
+        except Exception as e:
+            logger.error(f"❌ First payment failed for sub {subscription.id}: {e}")
+            try:
+                subscription.status = Web3SubscriptionStatus.PAST_DUE
+                subscription.failed_payment_count = 1
+                subscription.updated_at = datetime.utcnow()
+                self.db.commit()
+            except Exception:
+                pass
+
+
 
     # ============= CANCELLATION =============
 
