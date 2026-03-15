@@ -223,8 +223,8 @@ class Web3SubscriptionService:
             nonce=nonce,
         )
 
-        # Step 2: Calculate start time (first payment at next interval)
-        start_time = int(datetime.utcnow().timestamp()) + interval_seconds
+        # Step 2: Calculate start time (first payment immediately with 60s buffer for Tx timing)
+        start_time = int(datetime.utcnow().timestamp()) + 60
 
         # Step 3: Create on-chain subscription via relayer
         try:
@@ -255,6 +255,10 @@ class Web3SubscriptionService:
         except Exception:
             pass
 
+        # Use the actual startTime the relayer sent to the contract (fetched from chain).
+        # Falls back to the Python-clock-based start_time if not present.
+        actual_start_time = result.get("start_time", start_time)
+
         # Step 5: Store in database
         subscription = Web3Subscription(
             onchain_subscription_id=onchain_id,
@@ -266,7 +270,7 @@ class Web3SubscriptionService:
             token_symbol=token_symbol,
             amount=Decimal(str(amount)),
             interval_seconds=interval_seconds,
-            next_payment_at=datetime.utcfromtimestamp(start_time),
+            next_payment_at=datetime.utcfromtimestamp(actual_start_time),
             status=Web3SubscriptionStatus.ACTIVE,
             # Keep this nullable for compatibility with existing schema where
             # web3_subscriptions.plan_id may be UUID while plan IDs are strings.

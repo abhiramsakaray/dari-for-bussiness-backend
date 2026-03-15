@@ -381,17 +381,39 @@ class GaslessRelayer:
             start_time: First payment timestamp (uint64)
         """
         contract = self._get_contract(chain)
+        w3 = self._get_w3(chain)
+
+        # Use on-chain block.timestamp so gas estimation never sees a past startTime.
+        # Python's clock can drift vs the RPC node, causing InvalidStartTime() reverts.
+        try:
+            latest_block = w3.eth.get_block("latest")
+            onchain_ts = int(latest_block["timestamp"])
+        except Exception:
+            onchain_ts = int(time.time())
+
+        # Allow ample buffer (120 s) so the tx lands safely in the future regardless
+        # of node-clock drift or slow mempool inclusion.
+        safe_start_time = onchain_ts + 120
+
+        logger.info(
+            f"[{chain}] createSubscription startTime={safe_start_time} "
+            f"(onchain_ts={onchain_ts}, caller_start_time={start_time})"
+        )
+
         tx_func = contract.functions.createSubscription(
             Web3.to_checksum_address(subscriber),
             Web3.to_checksum_address(merchant),
             Web3.to_checksum_address(token),
             amount,
             interval,
-            start_time,
+            safe_start_time,
         )
-        return await self._send_transaction(
+        result = await self._send_transaction(
             chain, "createSubscription", tx_func, db, subscription_id
         )
+        # Include the actual startTime used so callers can sync next_payment_at in DB
+        result["start_time"] = safe_start_time
+        return result
 
     async def execute_payment(
         self,

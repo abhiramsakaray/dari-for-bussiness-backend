@@ -1276,72 +1276,249 @@ async def manage_subscription_page(
     page = f"""<!DOCTYPE html>
 <html lang=\"en\">
 <head>
-  <meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">
-  <title>Manage Subscription</title>
-  <style>
-    body{{font-family:Inter,Arial,sans-serif;background:#f4f6fb;padding:20px}}
-    .card{{max-width:760px;margin:0 auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 8px 30px rgba(0,0,0,.08)}}
-    h1{{margin:0 0 8px 0;font-size:22px}}
-    .meta{{color:#475569;font-size:14px;margin-bottom:18px}}
-    .status{{display:inline-block;padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:700}}
-    .grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}}
-    .box{{background:#f8fafc;padding:12px;border-radius:10px;border:1px solid #e2e8f0}}
-    .lbl{{font-size:12px;color:#64748b}}
-    .val{{font-weight:700;color:#0f172a;margin-top:4px}}
-    .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}}
-    button{{border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}}
-    .pay{{background:#1d4ed8;color:#fff}}
-    .pause{{background:#f59e0b;color:#fff}}
-    .resume{{background:#0ea5e9;color:#fff}}
-    .cancel{{background:#dc2626;color:#fff}}
-    .msg{{margin-top:14px;font-size:14px}}
-  </style>
+    <meta charset=\"UTF-8\">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+    <title>Manage Subscription - {sub.id}</title>
+    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap\" rel=\"stylesheet\">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }}
+        .modal {{
+            display: flex;
+            width: 780px;
+            max-width: 100%;
+            min-height: 520px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+            border: 1px solid #e0e3e8;
+            background: #ffffff;
+            flex-direction: column;
+        }}
+        @media (min-width: 768px) {{
+            .modal {{ flex-direction: row; }}
+        }}
+
+        /* ── LEFT ── */
+        .left {{
+            width: 100%;
+            background: linear-gradient(165deg, #2563eb 0%, #1d4ed8 40%, #1e3a8a 100%);
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            padding: 30px 24px 22px;
+            position: relative;
+            overflow: hidden;
+        }}
+        @media (min-width: 768px) {{
+            .left {{ width: 300px; min-width: 300px; }}
+        }}
+        .left::after {{
+            content: ''; position: absolute; bottom: -60px; left: -30px;
+            width: 220px; height: 220px; background: rgba(255, 255, 255, 0.05);
+            border-radius: 50%; pointer-events: none;
+        }}
+        .left::before {{
+            content: ''; position: absolute; bottom: 50px; right: -50px;
+            width: 160px; height: 160px; background: rgba(255, 255, 255, 0.04);
+            border-radius: 50%; pointer-events: none;
+        }}
+        .m-header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }}
+        .m-avatar {{
+            width: 44px; height: 44px; border-radius: 11px;
+            background: rgba(255, 255, 255, 0.18); display: flex;
+            align-items: center; justify-content: center; font-size: 20px;
+            font-weight: 700; backdrop-filter: blur(4px);
+        }}
+        .m-name {{ font-size: 17px; font-weight: 700; }}
+        .price-box {{
+            background: rgba(255, 255, 255, 0.11); backdrop-filter: blur(6px);
+            border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 14px;
+            padding: 20px 18px; margin-bottom: 20px;
+        }}
+        .price-title {{
+            font-size: 11px; font-weight: 700; opacity: 0.7; text-transform: uppercase;
+            letter-spacing: 1px; margin-bottom: 10px;
+        }}
+        .price-fiat {{ font-size: 36px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.1; }}
+        .price-interval {{ margin-top: 10px; font-size: 13px; font-weight: 500; opacity: 0.8; display: flex; align-items: center; gap: 6px; }}
+        .price-interval .tag {{ background: rgba(255, 255, 255, 0.14); padding: 2px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; text-transform: capitalize; }}
+        .plan-name {{ font-size: 20px; font-weight: 700; margin-bottom: 6px; position: relative; z-index: 1; }}
+        .plan-desc {{ font-size: 13px; opacity: 0.75; line-height: 1.5; margin-bottom: 16px; position: relative; z-index: 1; word-break: break-all; }}
+        .left-footer {{ margin-top: auto; font-size: 12px; opacity: 0.6; display: flex; align-items: center; gap: 6px; position: relative; z-index: 1; }}
+
+        /* ── RIGHT ── */
+        .right {{ flex: 1; padding: 32px 36px; display: flex; flex-direction: column; position: relative; background: #ffffff; }}
+        .r-header {{ margin-bottom: 24px; }}
+        .r-title {{ font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #0f172a; margin-bottom: 6px; }}
+        .r-subtitle {{ font-size: 14px; color: #64748b; margin-bottom: 16px; }}
+
+        .status-badge {{
+            display: inline-block; padding: 4px 12px; border-radius: 999px;
+            font-size: 12px; font-weight: 700; text-transform: uppercase;
+            background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe;
+        }}
+        .status-active {{ background: #ecfdf5; color: #059669; border-color: #a7f3d0; }}
+        .status-past_due {{ background: #fffbeb; color: #d97706; border-color: #fde68a; }}
+        .status-cancelled {{ background: #fef2f2; color: #dc2626; border-color: #fecaca; }}
+
+        .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }}
+        .info-box {{
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
+            padding: 16px; display: flex; flex-direction: column; gap: 4px;
+        }}
+        .info-label {{ font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }}
+        .info-val {{ font-size: 15px; font-weight: 700; color: #0f172a; }}
+
+        .action-group {{ margin-top: auto; display: flex; flex-direction: column; gap: 12px; }}
+        .action-row {{ display: flex; gap: 12px; }}
+        .btn {{
+            flex: 1; border: none; border-radius: 10px; padding: 12px 16px;
+            font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }}
+        .btn-primary {{ background: #0f172a; color: #fff; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }}
+        .btn-primary:hover {{ background: #1e293b; transform: translateY(-1px); }}
+        .btn-secondary {{ background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }}
+        .btn-secondary:hover {{ background: #e2e8f0; color: #0f172a; }}
+        .btn-danger {{ background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }}
+        .btn-danger:hover {{ background: #fee2e2; color: #b91c1c; }}
+
+        .msg-box {{
+            margin-top: 16px; padding: 12px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+            display: none; background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; text-align: center;
+        }}
+    </style>
 </head>
 <body>
-  <div class=\"card\">
-    <h1>Manage Subscription</h1>
-    <div class=\"meta\">Subscription <b>{sub.id}</b> · Email <b>{sub.customer_email}</b></div>
-    <div class=\"status\">{status}</div>
+    <div class=\"modal\">
+        <!-- Left Banner -->
+        <div class=\"left\">
+            <div class=\"m-header\">
+                <div class=\"m-avatar\">SC</div>
+                <div class=\"m-name\">Manage Subscription</div>
+            </div>
 
-    <div class=\"grid\">
-      <div class=\"box\"><div class=\"lbl\">Plan</div><div class=\"val\">{sub.plan_id}</div></div>
-      <div class=\"box\"><div class=\"lbl\">Next Payment</div><div class=\"val\">{sub.next_payment_at or '-'}</div></div>
+            <div class=\"price-box\">
+                <div class=\"price-title\">Total Billed</div>
+                <div class=\"price-fiat\">{sub.plan.amount if sub.plan else "N/A"} {(sub.plan.fiat_currency if sub.plan else "").upper()}</div>
+                <div class=\"price-interval\">
+                    Recurring <span class=\"tag\">{sub.plan.interval.value if sub.plan and hasattr(sub.plan.interval, "value") else (sub.plan.interval if sub.plan else "N/A")}</span>
+                </div>
+            </div>
+
+            <div class=\"plan-name\">{sub.plan.name if sub.plan else "Subscription Plan"}</div>
+            <div class=\"plan-desc\">{sub.id}</div>
+
+            <div class=\"left-footer\">
+                <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path></svg>
+                Secured by ChainPe
+            </div>
+        </div>
+
+        <!-- Right Content -->
+        <div class=\"right\">
+            <div class=\"r-header\">
+                <div class=\"r-title\">Subscription Overview</div>
+                <div class=\"r-subtitle\">Manage your billing and payment preferences.</div>
+                <div class=\"status-badge status-{str(status).lower()}\">{str(status).replace("_", " ")}</div>
+            </div>
+
+            <div class=\"info-grid\">
+                <div class=\"info-box\">
+                    <div class=\"info-label\">Customer Email</div>
+                    <div class=\"info-val\">{sub.customer_email}</div>
+                </div>
+                <div class=\"info-box\">
+                    <div class=\"info-label\">Next Payment</div>
+                    <div class=\"info-val\">{sub.next_payment_at.strftime('%b %d, %Y') if sub.next_payment_at else '-'}</div>
+                </div>
+            </div>
+
+            <div id=\"msg\" class=\"msg-box\"></div>
+
+            <div class=\"action-group\">
+                <button class=\"btn btn-primary\" onclick=\"actionCall('pay-now', this)\">
+                    Pay Due / Advance
+                </button>
+                <div class=\"action-row\">
+                    <button class=\"btn btn-secondary\" onclick=\"actionCall('pause', this)\">Pause</button>
+                    <button class=\"btn btn-secondary\" onclick=\"actionCall('resume', this)\">Resume</button>
+                </div>
+                <button class=\"btn btn-danger\" onclick=\"actionCall('cancel', this)\">
+                    Cancel Subscription
+                </button>
+            </div>
+        </div>
     </div>
 
-    <div class=\"actions\">
-      <button class=\"pay\" onclick=\"actionCall('pay-now')\">Pay Due / Advance</button>
-      <button class=\"pause\" onclick=\"actionCall('pause')\">Pause</button>
-      <button class=\"resume\" onclick=\"actionCall('resume')\">Resume</button>
-      <button class=\"cancel\" onclick=\"actionCall('cancel')\">Cancel</button>
-    </div>
+    <script>
+        async function actionCall(action, btn) {{
+            const msgBox = document.getElementById('msg');
+            const originalText = btn.innerHTML;
+            
+            msgBox.style.display = 'block';
+            msgBox.textContent = 'Processing request...';
+            msgBox.style.background = '#e0e7ff';
+            msgBox.style.color = '#3730a3';
+            msgBox.style.borderColor = '#c7d2fe';
+            
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="animate-spin" style="animation: spin 1s linear infinite; height: 16px; width: 16px; margin-right: 8px;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing...`;
+            
+            const style = document.createElement('style');
+            style.innerHTML = `@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}`;
+            document.head.appendChild(style);
 
-    <div id=\"msg\" class=\"msg\"></div>
-  </div>
-
-  <script>
-    async function actionCall(action) {{
-      const msg = document.getElementById('msg');
-      msg.textContent = 'Processing...';
-      const url = `{base_url}/subscribe/manage/{subscription_id}/` + action;
-      const res = await fetch(url, {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ email: '{email}' }})
-      }});
-      const data = await res.json();
-      if (!res.ok) {{
-        msg.textContent = data.detail || 'Failed';
-        return;
-      }}
-      if (data.checkout_url) {{
-        window.location.href = data.checkout_url;
-        return;
-      }}
-      msg.textContent = data.message || 'Done';
-      setTimeout(() => window.location.reload(), 900);
-    }}
-  </script>
-</body></html>"""
+            try {{
+                const url = `{base_url}/subscribe/manage/{subscription_id}/` + action;
+                const res = await fetch(url, {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: '{email}' }})
+                }});
+                const data = await res.json();
+                
+                if (!res.ok) {{
+                    msgBox.style.background = '#fef2f2';
+                    msgBox.style.color = '#dc2626';
+                    msgBox.style.borderColor = '#fecaca';
+                    msgBox.textContent = data.detail || 'Request failed';
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }}
+                
+                if (data.checkout_url) {{
+                    window.location.href = data.checkout_url;
+                    return;
+                }}
+                
+                msgBox.style.background = '#ecfdf5';
+                msgBox.style.color = '#059669';
+                msgBox.style.borderColor = '#a7f3d0';
+                msgBox.textContent = data.message || 'Operation successful';
+                setTimeout(() => window.location.reload(), 1000);
+            }} catch (e) {{
+                msgBox.style.background = '#fef2f2';
+                msgBox.style.color = '#dc2626';
+                msgBox.style.borderColor = '#fecaca';
+                msgBox.textContent = 'A network error occurred.';
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }}
+        }}
+    </script>
+</body>
+</html>"""
 
     return HTMLResponse(content=page)
 
