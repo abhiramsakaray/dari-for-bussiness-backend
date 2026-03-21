@@ -42,7 +42,6 @@ export const PaymentFlow: React.FC<PaymentFlowProps> = ({ sessionId }) => {
   const loadSessionData = async () => {
     try {
       setLoading(true);
-      
       // Get session details
       const sessionData = await chainpeService.getSession(sessionId);
       setSession(sessionData);
@@ -59,7 +58,17 @@ export const PaymentFlow: React.FC<PaymentFlowProps> = ({ sessionId }) => {
         setSelectedOption(selected || null);
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load payment data');
+      // Enhanced error handling for HTML/invalid JSON responses
+      if (err.response && err.response.data) {
+        if (typeof err.response.data === 'string' && err.response.data.startsWith('<!DOCTYPE')) {
+          setError('Received HTML response instead of JSON. Please check your API base URL.');
+          console.error('Raw response:', err.response.data);
+        } else {
+          setError(err.response.data.detail || 'Failed to load payment data');
+        }
+      } else {
+        setError(err.message || 'Failed to load payment data');
+      }
     } finally {
       setLoading(false);
     }
@@ -68,7 +77,6 @@ export const PaymentFlow: React.FC<PaymentFlowProps> = ({ sessionId }) => {
   const handleSelectOption = async (option: PaymentOption) => {
     try {
       setLoading(true);
-      
       // Call API to select payment method
       await chainpeService.selectPaymentMethod(sessionId, {
         token: option.token,
@@ -77,11 +85,20 @@ export const PaymentFlow: React.FC<PaymentFlowProps> = ({ sessionId }) => {
 
       // Update selected option
       setSelectedOption(option);
-      
       // Reload session to get updated wallet address
       await loadSessionData();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to select payment method');
+      // Enhanced error handling for HTML/invalid JSON responses
+      if (err.response && err.response.data) {
+        if (typeof err.response.data === 'string' && err.response.data.startsWith('<!DOCTYPE')) {
+          setError('Received HTML response instead of JSON. Please check your API base URL.');
+          console.error('Raw response:', err.response.data);
+        } else {
+          setError(err.response.data.detail || 'Failed to select payment method');
+        }
+      } else {
+        setError(err.message || 'Failed to select payment method');
+      }
     } finally {
       setLoading(false);
     }

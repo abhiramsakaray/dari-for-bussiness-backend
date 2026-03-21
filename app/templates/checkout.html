@@ -561,6 +561,9 @@
 </div>
 
 <script>
+// Set API_BASE to your backend API domain (e.g., https://api.daripay.xyz)
+window.API_BASE = window.API_BASE || window.location.origin;
+const API_BASE = window.API_BASE;
 const SESSION='{{ session_id }}',CANCEL='{{ cancel_url }}',SUCCESS='{{ success_url }}',EXPIRES=new Date('{{ expires_at }}');
 const BASE_AMOUNT_USD={{ amount_fiat }};
 let poll;
@@ -677,7 +680,7 @@ function _buildPayerBody(){
 }
 
 function _sendPayerData(body,onSuccess,onError){
-    fetch('/checkout/'+SESSION+'/payer-data',{
+    fetch(API_BASE+'/checkout/'+SESSION+'/payer-data',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(body)
@@ -782,10 +785,12 @@ function showPaymentPending(data){
 }
 
 function checkPay(){
-    fetch('/public/session/'+SESSION+'/verify').then(r=>r.json()).then(d=>{
-        if(d.status==='paid'){showPaymentSuccess()}
-        else if(d.status==='pending'){showPaymentPending(d)}
-    }).catch(()=>{});
+    fetch(API_BASE+'/public/session/'+SESSION+'/verify')
+        .then(r=>r.json())
+        .then(d=>{
+            if(d.status==='paid'){showPaymentSuccess()}
+            else if(d.status==='pending'){showPaymentPending(d)}
+        }).catch(()=>{});
 }
 
 function cp(txt,btn){
@@ -850,7 +855,7 @@ function applyCoupon(){
     // Determine customer_id from payer data if available
     const payerEmail=(document.getElementById('payerEmail')||{}).value||'anonymous';
 
-    fetch('/api/payment/apply-coupon',{
+    fetch(API_BASE+'/api/payment/apply-coupon',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
@@ -875,7 +880,7 @@ function applyCoupon(){
 
             // Refresh QR code and crypto amount for the discounted price
             if(parseFloat(d.final_amount)>0){
-                fetch('/checkout/'+SESSION+'/refresh-qr?amount='+d.final_amount)
+                fetch(API_BASE+'/checkout/'+SESSION+'/refresh-qr?amount='+d.final_amount)
                     .then(r=>r.json()).then(qr=>{
                         const qrImg=document.getElementById('qrImg');
                         if(qrImg)qrImg.src=qr.qr_code_b64;
@@ -891,7 +896,7 @@ function applyCoupon(){
             // If 100% discount → auto-complete payment (no blockchain payment needed)
             if(parseFloat(d.final_amount)<=0){
                 msg.textContent='✓ 100% discount! Completing payment...';
-                fetch('/api/payment/complete-coupon-payment',{
+                fetch(API_BASE+'/api/payment/complete-coupon-payment',{
                     method:'POST',
                     headers:{'Content-Type':'application/json'},
                     body:JSON.stringify({session_id:SESSION,coupon_code:d.coupon_code})
