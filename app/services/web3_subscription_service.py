@@ -328,11 +328,11 @@ class Web3SubscriptionService:
         import asyncio
         
         # Calculate time remaining until the subscription's start time on-chain
-        # The relayer baked in a 120s buffer for 'safe_start_time' to avoid createSubscription reverts.
+        # The relayer now uses a 5s buffer for 'safe_start_time' to avoid createSubscription reverts.
         # We must wait until block.timestamp >= nextPayment to avoid PaymentNotDue() revert.
         now_ts = int(datetime.utcnow().timestamp())
         start_ts = int(subscription.next_payment_at.timestamp())
-        wait_seconds = max(5, start_ts - now_ts + 5) # Check if we need to wait for the 120s buffer, minimum 5s for indexing
+        wait_seconds = max(5, start_ts - now_ts + 1) # Minimum 5s for indexing, +1s to avoid race
 
         logger.info(
             f"⚡ Waiting {wait_seconds}s before first payment for sub {subscription.id} "

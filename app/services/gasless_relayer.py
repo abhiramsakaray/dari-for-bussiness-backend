@@ -391,9 +391,9 @@ class GaslessRelayer:
         except Exception:
             onchain_ts = int(time.time())
 
-        # Allow ample buffer (120 s) so the tx lands safely in the future regardless
+        # Allow minimal buffer (5 s) so the tx lands safely in the future regardless
         # of node-clock drift or slow mempool inclusion.
-        safe_start_time = onchain_ts + 120
+        safe_start_time = onchain_ts + 5
 
         logger.info(
             f"[{chain}] createSubscription startTime={safe_start_time} "
