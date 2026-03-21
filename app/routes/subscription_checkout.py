@@ -573,6 +573,8 @@ async def subscribe_to_plan(
                 "source": source,
                 "customer_id": customer_id,
                 "return_url": return_url,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
             }
             authorize_url = f"{base_url}/subscribe/authorize/{sub_id}?email={email}"
         else:
@@ -1123,7 +1125,16 @@ async def subscription_authorize_page(
 
       setStatus('Authorized');
       setMsg('Subscription authorized. Redirecting...');
-      setTimeout(() => {{ window.location.href = cfg.manage_url; }}, 700);
+      let targetUrl = cfg.manage_url;
+      if (cfg.success_url) {{
+          try {{
+              const urlObj = new URL(cfg.success_url);
+              urlObj.searchParams.set('subscription_id', SUB_ID);
+              urlObj.searchParams.set('status', 'PENDING_PAYMENT');
+              targetUrl = urlObj.toString();
+          }} catch(e) {{ targetUrl = cfg.success_url; }}
+      }}
+      setTimeout(() => {{ window.location.href = targetUrl; }}, 700);
     }} catch (e) {{
       setStatus('Authorization failed');
       const msg = formatErr(e);
@@ -1202,6 +1213,10 @@ async def subscription_authorize_config(
     amount_raw = int(amount * Decimal(10 ** 6))
     max_payments = int(plan.max_billing_cycles) if plan.max_billing_cycles else None
 
+    meta = sub.subscription_metadata or {}
+    success_url = meta.get("success_url")
+    cancel_url = meta.get("cancel_url")
+
     base_url = str(request.base_url).rstrip("/")
     return {
         "subscription_id": sub.id,
@@ -1220,6 +1235,8 @@ async def subscription_authorize_config(
         "interval": interval,
         "interval_seconds": interval_seconds,
         "manage_url": _build_manage_url(base_url, sub.id, sub.customer_email),
+        "success_url": success_url,
+        "cancel_url": cancel_url,
     }
 
 
