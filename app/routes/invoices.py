@@ -488,5 +488,108 @@ def build_invoice_response(invoice: Invoice, request: Request) -> InvoiceRespons
         notes=invoice.notes,
         terms=invoice.terms,
         footer=invoice.footer,
+        # Multi-currency
+        tx_hash=invoice.tx_hash,
+        chain=invoice.chain,
+        token_symbol=invoice.token_symbol,
+        token_amount=invoice.token_amount,
+        payer_currency=invoice.payer_currency,
+        payer_amount_local=float(invoice.payer_amount_local) if invoice.payer_amount_local else None,
+        merchant_currency=invoice.merchant_currency,
+        merchant_amount_local=float(invoice.merchant_amount_local) if invoice.merchant_amount_local else None,
         created_at=invoice.created_at
+    )
+
+
+# ── Invoice Export Endpoints ──
+
+from fastapi.responses import StreamingResponse
+from app.services.invoice_export import (
+    generate_invoice_pdf,
+    generate_invoice_csv,
+    generate_invoice_image,
+)
+
+
+@router.get("/{invoice_id}/export/pdf")
+async def export_invoice_pdf(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+):
+    """Export invoice as PDF for tax filing and records."""
+    invoice = db.query(Invoice).filter(
+        and_(
+            Invoice.id == invoice_id,
+            Invoice.merchant_id == uuid.UUID(current_user["id"])
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    merchant = db.query(Merchant).filter(Merchant.id == invoice.merchant_id).first()
+    pdf_bytes = generate_invoice_pdf(invoice, merchant)
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice_{invoice.invoice_number}.pdf"
+        },
+    )
+
+
+@router.get("/{invoice_id}/export/csv")
+async def export_invoice_csv(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+):
+    """Export invoice as CSV for accounting software (Tally, QuickBooks, Xero)."""
+    invoice = db.query(Invoice).filter(
+        and_(
+            Invoice.id == invoice_id,
+            Invoice.merchant_id == uuid.UUID(current_user["id"])
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    merchant = db.query(Merchant).filter(Merchant.id == invoice.merchant_id).first()
+    csv_bytes = generate_invoice_csv(invoice, merchant)
+
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice_{invoice.invoice_number}.csv"
+        },
+    )
+
+
+@router.get("/{invoice_id}/export/image")
+async def export_invoice_image(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+):
+    """Export invoice as PNG image for sharing and printing."""
+    invoice = db.query(Invoice).filter(
+        and_(
+            Invoice.id == invoice_id,
+            Invoice.merchant_id == uuid.UUID(current_user["id"])
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    merchant = db.query(Merchant).filter(Merchant.id == invoice.merchant_id).first()
+    img_bytes = generate_invoice_image(invoice, merchant)
+
+    return StreamingResponse(
+        iter([img_bytes]),
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice_{invoice.invoice_number}.png"
+        },
     )

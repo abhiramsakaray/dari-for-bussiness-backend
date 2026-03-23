@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+import secrets as secrets_module
 from app.core import get_db, require_merchant
 from app.models import Merchant
 from app.schemas import MerchantProfileUpdate, MerchantProfile
@@ -66,3 +67,38 @@ async def update_merchant_profile(
         is_active=merchant.is_active,
         created_at=merchant.created_at
     )
+
+
+@router.post("/webhook-secret/rotate")
+async def rotate_webhook_secret(
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a new webhook secret for the merchant.
+
+    The new secret is returned ONCE in the response.
+    All future webhook deliveries will be signed with this secret.
+    The merchant must update their webhook verification code immediately.
+
+    Security:
+    - 32-byte cryptographically secure random hex string (256 bits)
+    - Old secret is permanently overwritten
+    - Constant-time comparison used during verification (in webhook_service)
+    """
+    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found")
+
+    # Generate a 256-bit random secret
+    new_secret = secrets_module.token_hex(32)
+    merchant.webhook_secret = new_secret
+    db.commit()
+
+    return {
+        "webhook_secret": new_secret,
+        "message": "Webhook secret rotated. Save this secret — it will not be shown again.",
+        "header_name": "X-Payment-Signature",
+        "signature_format": "t=<unix_timestamp>,v1=<hmac_sha256_hex>",
+        "verification_note": "Compute HMAC-SHA256(secret, '<timestamp>.<raw_body>') and compare to v1.",
+    }

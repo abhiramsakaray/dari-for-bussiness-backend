@@ -487,6 +487,18 @@ class Invoice(Base):
     payment_session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=True)
     amount_paid = Column(Numeric(precision=14, scale=2), default=0)
     
+    # ── Blockchain / On-chain details ──
+    tx_hash = Column(String, nullable=True)  # Blockchain transaction hash
+    chain = Column(String(20), nullable=True)  # e.g. polygon, ethereum
+    token_symbol = Column(String(10), nullable=True)  # USDC, USDT, PYUSD
+    token_amount = Column(String, nullable=True)  # On-chain token amount
+    
+    # ── Multi-currency (payer + merchant) ──
+    payer_currency = Column(String(10), nullable=True)  # e.g. EUR
+    payer_amount_local = Column(Numeric(precision=14, scale=2), nullable=True)
+    merchant_currency = Column(String(10), nullable=True)  # e.g. INR
+    merchant_amount_local = Column(Numeric(precision=14, scale=2), nullable=True)
+    
     # Notifications
     reminder_sent = Column(Boolean, default=False)
     overdue_sent = Column(Boolean, default=False)

@@ -778,6 +778,18 @@ class InvoiceResponse(BaseModel):
     payment_url: Optional[str] = None  # URL for customer to pay
     amount_paid: Decimal = Decimal("0")
     
+    # Blockchain / On-chain
+    tx_hash: Optional[str] = None
+    chain: Optional[str] = None
+    token_symbol: Optional[str] = None
+    token_amount: Optional[str] = None
+    
+    # Multi-currency
+    payer_currency: Optional[str] = None
+    payer_amount_local: Optional[float] = None
+    merchant_currency: Optional[str] = None
+    merchant_amount_local: Optional[float] = None
+    
     # Notes
     notes: Optional[str] = None
     terms: Optional[str] = None

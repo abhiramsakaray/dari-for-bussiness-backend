@@ -28,6 +28,8 @@ from app.routes import (
     subscription_checkout,
     # Web3 subscriptions
     web3_subscriptions,
+    # Tax & compliance reports
+    tax_reports,
 )
 
 # Configure logging
@@ -133,6 +135,9 @@ app.include_router(promo.payment_coupon_router)  # Checkout coupon application
 
 # Web3 subscription routers
 app.include_router(web3_subscriptions.router)  # Web3 recurring payments
+
+# Tax & compliance reports
+app.include_router(tax_reports.router)  # Tax summary, transactions, subscription revenue
 
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")

@@ -39,6 +39,7 @@ async def register_merchant(
         email=merchant_data.email,
         password_hash=hash_password(merchant_data.password),
         api_key=generate_api_key(),  # Auto-generate API key on registration
+        webhook_secret=secrets.token_hex(32),  # 256-bit webhook signing secret
         merchant_category=getattr(merchant_data, 'merchant_category', 'individual') or 'individual',
         onboarding_step=0,
         onboarding_completed=False,
@@ -200,6 +201,7 @@ async def google_auth(
         google_id=google_id,
         avatar_url=avatar_url,
         api_key=generate_api_key(),
+        webhook_secret=secrets.token_hex(32),  # 256-bit webhook signing secret
         onboarding_step=0,
         onboarding_completed=False,
         merchant_category="individual",

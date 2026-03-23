@@ -19,23 +19,48 @@ logger = logging.getLogger(__name__)
 # Covers 100+ countries. Falls back to USD if not found.
 
 COUNTRY_CURRENCY_MAP: Dict[str, Tuple[str, str, str]] = {
-    # Asia
+    # ── South Asia ──
     "India": ("INR", "₹", "Indian Rupee"),
     "Pakistan": ("PKR", "₨", "Pakistani Rupee"),
     "Bangladesh": ("BDT", "৳", "Bangladeshi Taka"),
     "Sri Lanka": ("LKR", "Rs", "Sri Lankan Rupee"),
     "Nepal": ("NPR", "₨", "Nepalese Rupee"),
+    "Bhutan": ("BTN", "Nu", "Bhutanese Ngultrum"),
+    "Maldives": ("MVR", "Rf", "Maldivian Rufiyaa"),
+    "Afghanistan": ("AFN", "؋", "Afghan Afghani"),
+
+    # ── East Asia ──
     "Japan": ("JPY", "¥", "Japanese Yen"),
     "China": ("CNY", "¥", "Chinese Yuan"),
     "South Korea": ("KRW", "₩", "South Korean Won"),
+    "North Korea": ("KPW", "₩", "North Korean Won"),
+    "Mongolia": ("MNT", "₮", "Mongolian Tugrik"),
+    "Taiwan": ("TWD", "NT$", "New Taiwan Dollar"),
+    "Hong Kong": ("HKD", "HK$", "Hong Kong Dollar"),
+    "Macau": ("MOP", "MOP$", "Macanese Pataca"),
+
+    # ── Southeast Asia ──
     "Singapore": ("SGD", "S$", "Singapore Dollar"),
     "Malaysia": ("MYR", "RM", "Malaysian Ringgit"),
     "Indonesia": ("IDR", "Rp", "Indonesian Rupiah"),
     "Thailand": ("THB", "฿", "Thai Baht"),
     "Vietnam": ("VND", "₫", "Vietnamese Dong"),
     "Philippines": ("PHP", "₱", "Philippine Peso"),
-    "Taiwan": ("TWD", "NT$", "New Taiwan Dollar"),
-    "Hong Kong": ("HKD", "HK$", "Hong Kong Dollar"),
+    "Myanmar": ("MMK", "K", "Myanmar Kyat"),
+    "Cambodia": ("KHR", "៛", "Cambodian Riel"),
+    "Laos": ("LAK", "₭", "Lao Kip"),
+    "Brunei": ("BND", "B$", "Brunei Dollar"),
+    "Timor-Leste": ("USD", "$", "US Dollar"),
+    "East Timor": ("USD", "$", "US Dollar"),
+
+    # ── Central Asia ──
+    "Kazakhstan": ("KZT", "₸", "Kazakhstani Tenge"),
+    "Uzbekistan": ("UZS", "сўм", "Uzbekistani Som"),
+    "Turkmenistan": ("TMT", "T", "Turkmen Manat"),
+    "Kyrgyzstan": ("KGS", "сом", "Kyrgyzstani Som"),
+    "Tajikistan": ("TJS", "SM", "Tajikistani Somoni"),
+
+    # ── Middle East ──
     "UAE": ("AED", "د.إ", "UAE Dirham"),
     "United Arab Emirates": ("AED", "د.إ", "UAE Dirham"),
     "Saudi Arabia": ("SAR", "﷼", "Saudi Riyal"),
@@ -49,10 +74,14 @@ COUNTRY_CURRENCY_MAP: Dict[str, Tuple[str, str, str]] = {
     "Iran": ("IRR", "﷼", "Iranian Rial"),
     "Jordan": ("JOD", "JD", "Jordanian Dinar"),
     "Lebanon": ("LBP", "ل.ل", "Lebanese Pound"),
-    "Myanmar": ("MMK", "K", "Myanmar Kyat"),
-    "Cambodia": ("KHR", "៛", "Cambodian Riel"),
+    "Syria": ("SYP", "£S", "Syrian Pound"),
+    "Yemen": ("YER", "﷼", "Yemeni Rial"),
+    "Palestine": ("ILS", "₪", "Israeli Shekel"),
+    "Georgia": ("GEL", "₾", "Georgian Lari"),
+    "Armenia": ("AMD", "֏", "Armenian Dram"),
+    "Azerbaijan": ("AZN", "₼", "Azerbaijani Manat"),
 
-    # Europe
+    # ── Eurozone (EUR) ──
     "Germany": ("EUR", "€", "Euro"),
     "France": ("EUR", "€", "Euro"),
     "Italy": ("EUR", "€", "Euro"),
@@ -73,9 +102,18 @@ COUNTRY_CURRENCY_MAP: Dict[str, Tuple[str, str, str]] = {
     "Malta": ("EUR", "€", "Euro"),
     "Cyprus": ("EUR", "€", "Euro"),
     "Croatia": ("EUR", "€", "Euro"),
+    "Andorra": ("EUR", "€", "Euro"),
+    "Monaco": ("EUR", "€", "Euro"),
+    "San Marino": ("EUR", "€", "Euro"),
+    "Vatican City": ("EUR", "€", "Euro"),
+    "Montenegro": ("EUR", "€", "Euro"),
+    "Kosovo": ("EUR", "€", "Euro"),
+
+    # ── Non-Euro Europe ──
     "United Kingdom": ("GBP", "£", "British Pound"),
     "UK": ("GBP", "£", "British Pound"),
     "Switzerland": ("CHF", "CHF", "Swiss Franc"),
+    "Liechtenstein": ("CHF", "CHF", "Swiss Franc"),
     "Sweden": ("SEK", "kr", "Swedish Krona"),
     "Norway": ("NOK", "kr", "Norwegian Krone"),
     "Denmark": ("DKK", "kr", "Danish Krone"),
@@ -89,12 +127,45 @@ COUNTRY_CURRENCY_MAP: Dict[str, Tuple[str, str, str]] = {
     "Russia": ("RUB", "₽", "Russian Ruble"),
     "Serbia": ("RSD", "din", "Serbian Dinar"),
     "Iceland": ("ISK", "kr", "Icelandic Króna"),
+    "Albania": ("ALL", "L", "Albanian Lek"),
+    "North Macedonia": ("MKD", "ден", "Macedonian Denar"),
+    "Bosnia and Herzegovina": ("BAM", "KM", "Convertible Mark"),
+    "Moldova": ("MDL", "L", "Moldovan Leu"),
+    "Belarus": ("BYN", "Br", "Belarusian Ruble"),
 
-    # Americas
+    # ── North America ──
     "United States": ("USD", "$", "US Dollar"),
     "USA": ("USD", "$", "US Dollar"),
     "Canada": ("CAD", "C$", "Canadian Dollar"),
     "Mexico": ("MXN", "$", "Mexican Peso"),
+
+    # ── Central America ──
+    "Guatemala": ("GTQ", "Q", "Guatemalan Quetzal"),
+    "Belize": ("BZD", "BZ$", "Belize Dollar"),
+    "Honduras": ("HNL", "L", "Honduran Lempira"),
+    "El Salvador": ("USD", "$", "US Dollar"),
+    "Nicaragua": ("NIO", "C$", "Nicaraguan Córdoba"),
+    "Costa Rica": ("CRC", "₡", "Costa Rican Colón"),
+    "Panama": ("USD", "$", "US Dollar"),
+
+    # ── Caribbean ──
+    "Cuba": ("CUP", "₱", "Cuban Peso"),
+    "Jamaica": ("JMD", "J$", "Jamaican Dollar"),
+    "Haiti": ("HTG", "G", "Haitian Gourde"),
+    "Dominican Republic": ("DOP", "RD$", "Dominican Peso"),
+    "Trinidad and Tobago": ("TTD", "TT$", "Trinidad Dollar"),
+    "Bahamas": ("BSD", "B$", "Bahamian Dollar"),
+    "Barbados": ("BBD", "Bds$", "Barbadian Dollar"),
+    "Guyana": ("GYD", "G$", "Guyanese Dollar"),
+    "Suriname": ("SRD", "Sr$", "Surinamese Dollar"),
+    "Antigua and Barbuda": ("XCD", "EC$", "East Caribbean Dollar"),
+    "Dominica": ("XCD", "EC$", "East Caribbean Dollar"),
+    "Grenada": ("XCD", "EC$", "East Caribbean Dollar"),
+    "Saint Kitts and Nevis": ("XCD", "EC$", "East Caribbean Dollar"),
+    "Saint Lucia": ("XCD", "EC$", "East Caribbean Dollar"),
+    "Saint Vincent and the Grenadines": ("XCD", "EC$", "East Caribbean Dollar"),
+
+    # ── South America ──
     "Brazil": ("BRL", "R$", "Brazilian Real"),
     "Argentina": ("ARS", "$", "Argentine Peso"),
     "Colombia": ("COP", "$", "Colombian Peso"),
@@ -105,36 +176,89 @@ COUNTRY_CURRENCY_MAP: Dict[str, Tuple[str, str, str]] = {
     "Uruguay": ("UYU", "$U", "Uruguayan Peso"),
     "Paraguay": ("PYG", "₲", "Paraguayan Guarani"),
     "Bolivia": ("BOB", "Bs.", "Bolivian Boliviano"),
-    "Costa Rica": ("CRC", "₡", "Costa Rican Colón"),
-    "Panama": ("USD", "$", "US Dollar"),
-    "Jamaica": ("JMD", "J$", "Jamaican Dollar"),
-    "Trinidad and Tobago": ("TTD", "TT$", "Trinidad Dollar"),
 
-    # Africa
+    # ── West Africa ──
     "Nigeria": ("NGN", "₦", "Nigerian Naira"),
-    "South Africa": ("ZAR", "R", "South African Rand"),
-    "Kenya": ("KES", "KSh", "Kenyan Shilling"),
     "Ghana": ("GHS", "₵", "Ghanaian Cedi"),
-    "Egypt": ("EGP", "E£", "Egyptian Pound"),
-    "Morocco": ("MAD", "MAD", "Moroccan Dirham"),
+    "Senegal": ("XOF", "CFA", "West African CFA Franc"),
+    "Ivory Coast": ("XOF", "CFA", "West African CFA Franc"),
+    "Cote d'Ivoire": ("XOF", "CFA", "West African CFA Franc"),
+    "Mali": ("XOF", "CFA", "West African CFA Franc"),
+    "Burkina Faso": ("XOF", "CFA", "West African CFA Franc"),
+    "Niger": ("XOF", "CFA", "West African CFA Franc"),
+    "Togo": ("XOF", "CFA", "West African CFA Franc"),
+    "Benin": ("XOF", "CFA", "West African CFA Franc"),
+    "Guinea-Bissau": ("XOF", "CFA", "West African CFA Franc"),
+    "Guinea": ("GNF", "FG", "Guinean Franc"),
+    "Sierra Leone": ("SLE", "Le", "Sierra Leonean Leone"),
+    "Liberia": ("LRD", "L$", "Liberian Dollar"),
+    "Gambia": ("GMD", "D", "Gambian Dalasi"),
+    "Cape Verde": ("CVE", "Esc", "Cape Verdean Escudo"),
+    "Mauritania": ("MRU", "UM", "Mauritanian Ouguiya"),
+
+    # ── Central Africa ──
+    "Cameroon": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Central African Republic": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Chad": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Republic of the Congo": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Gabon": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Equatorial Guinea": ("XAF", "FCFA", "Central African CFA Franc"),
+    "Democratic Republic of the Congo": ("CDF", "FC", "Congolese Franc"),
+    "DRC": ("CDF", "FC", "Congolese Franc"),
+    "Sao Tome and Principe": ("STN", "Db", "Sao Tomean Dobra"),
+
+    # ── East Africa ──
+    "Kenya": ("KES", "KSh", "Kenyan Shilling"),
     "Tanzania": ("TZS", "TSh", "Tanzanian Shilling"),
     "Ethiopia": ("ETB", "Br", "Ethiopian Birr"),
     "Uganda": ("UGX", "USh", "Ugandan Shilling"),
     "Rwanda": ("RWF", "RF", "Rwandan Franc"),
-    "Senegal": ("XOF", "CFA", "West African CFA Franc"),
-    "Ivory Coast": ("XOF", "CFA", "West African CFA Franc"),
-    "Cameroon": ("XAF", "FCFA", "Central African CFA Franc"),
-    "Tunisia": ("TND", "DT", "Tunisian Dinar"),
-    "Algeria": ("DZD", "د.ج", "Algerian Dinar"),
+    "Burundi": ("BIF", "FBu", "Burundian Franc"),
+    "Somalia": ("SOS", "Sh", "Somali Shilling"),
+    "Djibouti": ("DJF", "Fdj", "Djiboutian Franc"),
+    "Eritrea": ("ERN", "Nfk", "Eritrean Nakfa"),
+    "South Sudan": ("SSP", "£", "South Sudanese Pound"),
+    "Sudan": ("SDG", "£", "Sudanese Pound"),
+    "Madagascar": ("MGA", "Ar", "Malagasy Ariary"),
+    "Mauritius": ("MUR", "₨", "Mauritian Rupee"),
+    "Seychelles": ("SCR", "₨", "Seychellois Rupee"),
+    "Comoros": ("KMF", "CF", "Comorian Franc"),
+
+    # ── Southern Africa ──
+    "South Africa": ("ZAR", "R", "South African Rand"),
     "Zimbabwe": ("ZWL", "Z$", "Zimbabwean Dollar"),
     "Mozambique": ("MZN", "MT", "Mozambican Metical"),
     "Angola": ("AOA", "Kz", "Angolan Kwanza"),
+    "Zambia": ("ZMW", "ZK", "Zambian Kwacha"),
+    "Malawi": ("MWK", "MK", "Malawian Kwacha"),
+    "Botswana": ("BWP", "P", "Botswana Pula"),
+    "Namibia": ("NAD", "N$", "Namibian Dollar"),
+    "Lesotho": ("LSL", "L", "Lesotho Loti"),
+    "Eswatini": ("SZL", "E", "Swazi Lilangeni"),
+    "Swaziland": ("SZL", "E", "Swazi Lilangeni"),
 
-    # Oceania
+    # ── North Africa ──
+    "Egypt": ("EGP", "E£", "Egyptian Pound"),
+    "Morocco": ("MAD", "MAD", "Moroccan Dirham"),
+    "Tunisia": ("TND", "DT", "Tunisian Dinar"),
+    "Algeria": ("DZD", "د.ج", "Algerian Dinar"),
+    "Libya": ("LYD", "LD", "Libyan Dinar"),
+
+    # ── Oceania ──
     "Australia": ("AUD", "A$", "Australian Dollar"),
     "New Zealand": ("NZD", "NZ$", "New Zealand Dollar"),
     "Fiji": ("FJD", "FJ$", "Fijian Dollar"),
     "Papua New Guinea": ("PGK", "K", "Papua New Guinean Kina"),
+    "Samoa": ("WST", "WS$", "Samoan Tala"),
+    "Tonga": ("TOP", "T$", "Tongan Paanga"),
+    "Vanuatu": ("VUV", "VT", "Vanuatu Vatu"),
+    "Solomon Islands": ("SBD", "SI$", "Solomon Islands Dollar"),
+    "Kiribati": ("AUD", "A$", "Australian Dollar"),
+    "Marshall Islands": ("USD", "$", "US Dollar"),
+    "Micronesia": ("USD", "$", "US Dollar"),
+    "Palau": ("USD", "$", "US Dollar"),
+    "Tuvalu": ("AUD", "A$", "Australian Dollar"),
+    "Nauru": ("AUD", "A$", "Australian Dollar"),
 }
 
 # Default fallback

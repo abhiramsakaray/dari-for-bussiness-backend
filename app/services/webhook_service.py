@@ -94,6 +94,13 @@ async def send_webhook(session: PaymentSession, db: Session, retry_count: int = 
             
             if response.status_code >= 200 and response.status_code < 300:
                 logger.info(f"Webhook sent successfully to {webhook_url} for session {session.id}")
+                
+                # Auto-create invoice on successful payment
+                try:
+                    from app.services.invoice_service import create_invoice_from_payment
+                    create_invoice_from_payment(session, db)
+                except Exception as inv_err:
+                    logger.error(f"Auto-invoice creation failed for {session.id}: {inv_err}")
             else:
                 logger.warning(
                     f"Webhook returned non-2xx status {response.status_code} for session {session.id}"
