@@ -184,7 +184,10 @@ class SubscriptionScheduler:
                 # Update subscription
                 sub.total_payments += 1
                 sub.total_amount_collected += sub.amount
-                sub.next_payment_at = sub.next_payment_at + timedelta(
+                # Mirror on-chain logic: contract sets nextPayment = block.timestamp + interval
+                # Using utcnow() + interval instead of old next_payment_at + interval
+                # prevents re-triggering when the subscription was overdue.
+                sub.next_payment_at = datetime.utcnow() + timedelta(
                     seconds=sub.interval_seconds
                 )
                 sub.status = Web3SubscriptionStatus.ACTIVE

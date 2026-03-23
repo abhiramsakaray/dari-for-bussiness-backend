@@ -90,13 +90,18 @@ async def checkout_page(
         session.status = PaymentStatus.EXPIRED
         db.commit()
     
-    # If session is expired, reset it for re-use (extend expiry by another window)
+    # If session is expired, show the expired state (do NOT reset/extend)
     if is_expired and session.status == PaymentStatus.EXPIRED:
-        session.status = PaymentStatus.CREATED
-        session.expires_at = datetime.utcnow() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
-        expiry_time = session.expires_at
-        is_expired = False
-        db.commit()
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Session Expired</title></head>
+        <body style="font-family:Inter,Arial;text-align:center;padding:50px;background:#0a0e27;color:#fff">
+            <h1>⏰ Payment Session Expired</h1>
+            <p>This payment session has expired. Please request a new payment link from the merchant.</p>
+            <a href="{session.cancel_url or '/'}" style="color:#7c3aed;text-decoration:underline">Return to merchant</a>
+        </body></html>
+        """)
     
     # ── Parse available chains / tokens (handle JSONB strings) ──
     def _parse_json_field(val, default):
