@@ -20,7 +20,7 @@ from decimal import Decimal
 from typing import Optional, List
 
 from app.core.database import get_db
-from app.core import require_merchant
+from app.core.security import require_merchant, require_replay_protection
 from app.models.models import (
     Merchant, Refund, PaymentSession, PaymentStatus, Withdrawal,
     RefundStatus as DBRefundStatus
@@ -29,7 +29,11 @@ from app.schemas.schemas import (
     RefundCreate, RefundResponse, RefundList, RefundStatus, RefundEligibility
 )
 
-router = APIRouter(prefix="/refunds", tags=["Refunds"])
+router = APIRouter(
+    prefix="/refunds", 
+    tags=["Refunds"],
+    dependencies=[Depends(require_replay_protection)]
+)
 logger = logging.getLogger(__name__)
 
 # How long a queued refund stays before auto-cancellation (7 days)

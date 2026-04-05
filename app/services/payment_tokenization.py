@@ -27,8 +27,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Token TTL — matches the default payment session expiry
-_TOKEN_TTL_SECONDS = settings.PAYMENT_EXPIRY_MINUTES * 60
+# Token TTL — enforce 30 minutes for Token Vault as per security specs
+_TOKEN_TTL_SECONDS = 30 * 60
 
 # ── Redis client (lazy init) ──
 _redis_client = None

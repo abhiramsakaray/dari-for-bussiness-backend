@@ -10,6 +10,7 @@ from app.core.security import (
     require_merchant,
     require_admin,
     require_merchant_or_admin,
+    require_replay_protection,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "require_merchant",
     "require_admin",
     "require_merchant_or_admin",
+    "require_replay_protection",
 ]

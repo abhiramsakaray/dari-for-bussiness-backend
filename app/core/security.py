@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 
@@ -102,3 +102,15 @@ def require_merchant_or_admin(current_user: dict = Depends(get_current_user)):
             detail=f"Access forbidden: merchant or admin role required. Got role: {current_user.get('role')}",
         )
     return current_user
+
+
+def require_replay_protection(request: Request):
+    """Dependency to enforce Replay Protection headers on sensitive routes."""
+    nonce = request.headers.get("X-Request-Nonce")
+    timestamp = request.headers.get("X-Request-Timestamp")
+    if not nonce or not timestamp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Replay protection headers required: X-Request-Nonce and X-Request-Timestamp",
+        )
+    return True

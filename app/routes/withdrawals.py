@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import logging
 
-from app.core import get_db, require_merchant
+from app.core import get_db, require_merchant, require_replay_protection
 from app.models import Merchant, Withdrawal, WithdrawalLimit, MerchantWallet
 from app.schemas import (
     WithdrawalRequest,
@@ -26,7 +26,11 @@ from app.schemas import (
 )
 from app.services.currency_service import get_currency_for_country, build_local_amount
 
-router = APIRouter(prefix="/withdrawals", tags=["Withdrawals"])
+router = APIRouter(
+    prefix="/withdrawals", 
+    tags=["Withdrawals"],
+    dependencies=[Depends(require_replay_protection)]
+)
 logger = logging.getLogger(__name__)
 
 SUPPORTED_TOKENS = {"USDC", "USDT", "PYUSD"}
