@@ -88,7 +88,7 @@ async def get_analytics_overview(
     - Invoice and subscription metrics
     - Comparison to previous period
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     # Check cache
     ck = make_cache_key("overview", merchant_id, period.value)
@@ -177,7 +177,7 @@ async def get_revenue_timeseries(
     
     Returns daily/weekly/monthly revenue data points for charting.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
     m_currency, m_symbol = _resolve_currency_context(merchant)
     
@@ -236,7 +236,7 @@ async def get_payment_summary(
     
     Returns counts and amounts by status.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -276,7 +276,7 @@ async def get_top_customers(
     """
     Get top customers by payment volume.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -302,7 +302,7 @@ async def get_conversion_metrics(
     - Average time to payment
     - Drop-off rates by step
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -375,7 +375,7 @@ async def get_chain_analytics(
     """
     Get analytics by blockchain network.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     period_start = datetime.utcnow() - timedelta(days=days)
     
@@ -823,7 +823,7 @@ async def get_mrr_arr(
     MRR = sum of all active subscriptions normalised to monthly.
     ARR = MRR * 12.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
 
     ck = make_cache_key("mrr_arr", merchant_id)
     cached = cache.get(ck, region="analytics")
@@ -923,7 +923,7 @@ async def get_mrr_trend(
     """
     MRR trend over past N months — provides monthly data points for charting.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
 
     ck = make_cache_key("mrr_trend", merchant_id, months)
     cached = cache.get(ck, region="analytics")
@@ -1011,7 +1011,7 @@ async def track_payment(
     """
     Detailed payment tracking with event timeline.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     session = db.query(PaymentSession).filter(
         PaymentSession.id == session_id,
         PaymentSession.merchant_id == merchant_id,
@@ -1067,7 +1067,7 @@ async def track_subscription(
     """
     Detailed subscription tracking with payment history.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     sub = db.query(Subscription).filter(
         Subscription.id == subscription_id,
         Subscription.merchant_id == merchant_id,

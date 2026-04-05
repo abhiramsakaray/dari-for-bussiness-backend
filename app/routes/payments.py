@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import uuid
 from app.core import get_db, require_merchant
 from app.core.config import settings
 from app.models import Merchant, PaymentSession, PaymentStatus
@@ -21,7 +22,7 @@ async def create_payment_session(
 ):
     """Create a new payment session (merchant only)."""
     # Get merchant details
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     
     if not merchant:
         raise HTTPException(

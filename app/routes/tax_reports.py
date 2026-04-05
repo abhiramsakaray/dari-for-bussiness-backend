@@ -15,6 +15,7 @@ Security:
 import csv
 import io
 import logging
+import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -68,7 +69,7 @@ async def tax_summary(
     Returns total revenue, tax collected, refunds, net revenue,
     and breakdowns by token, chain, and payment type.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date") + timedelta(days=1)  # Inclusive
 
@@ -185,7 +186,7 @@ async def tax_transactions(
 
     Export as CSV for direct import into accounting software (Tally, QuickBooks, Xero, etc.)
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date") + timedelta(days=1)
 
@@ -254,7 +255,7 @@ async def subscription_revenue_report(
     Subscription-specific revenue report.
     Includes MRR, ARR, churn, and per-subscription payment history.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date") + timedelta(days=1)
 

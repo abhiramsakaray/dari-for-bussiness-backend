@@ -323,9 +323,10 @@ async def get_payment_session_detail(
     db: Session = Depends(get_db)
 ):
     """Get detailed information about a specific payment session."""
+    merchant_uuid = uuid.UUID(current_user["id"])
     session = db.query(PaymentSession).filter(
         PaymentSession.id == session_id,
-        PaymentSession.merchant_id == current_user["id"]
+        PaymentSession.merchant_id == merchant_uuid
     ).first()
     
     if not session:
@@ -372,9 +373,10 @@ async def cancel_payment_session(
     db: Session = Depends(get_db)
 ):
     """Manually cancel/expire a payment session."""
+    merchant_uuid = uuid.UUID(current_user["id"])
     session = db.query(PaymentSession).filter(
         PaymentSession.id == session_id,
-        PaymentSession.merchant_id == current_user["id"]
+        PaymentSession.merchant_id == merchant_uuid
     ).first()
     
     if not session:

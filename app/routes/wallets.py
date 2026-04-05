@@ -235,7 +235,7 @@ async def add_wallet(
     Each merchant can have one active wallet per chain.
     Adding a new wallet for an existing chain will replace the old one.
     """
-    merchant_id = current_user["id"]
+    merchant_id = uuid.UUID(current_user["id"])
     
     # Validate wallet address format based on chain
     chain = wallet_data.chain.value if hasattr(wallet_data.chain, 'value') else wallet_data.chain
@@ -302,8 +302,9 @@ async def get_wallet(
     """
     Get wallet for a specific blockchain network.
     """
+    merchant_uuid = uuid.UUID(current_user["id"])
     wallet = db.query(MerchantWallet).filter(
-        MerchantWallet.merchant_id == current_user["id"],
+        MerchantWallet.merchant_id == merchant_uuid,
         MerchantWallet.chain == chain.lower(),
         MerchantWallet.is_active == True
     ).first()
@@ -334,8 +335,9 @@ async def delete_wallet(
     
     The wallet is not deleted, just marked as inactive.
     """
+    merchant_uuid = uuid.UUID(current_user["id"])
     wallet = db.query(MerchantWallet).filter(
-        MerchantWallet.merchant_id == current_user["id"],
+        MerchantWallet.merchant_id == merchant_uuid,
         MerchantWallet.chain == chain.lower()
     ).first()
     

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import secrets as secrets_module
+import uuid
 from app.core import get_db, require_merchant
 from app.models import Merchant
 from app.schemas import MerchantProfileUpdate, MerchantProfile
@@ -14,7 +15,7 @@ async def get_merchant_profile(
     db: Session = Depends(get_db)
 ):
     """Get merchant profile."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     
     if not merchant:
         raise HTTPException(
@@ -40,7 +41,7 @@ async def update_merchant_profile(
     db: Session = Depends(get_db)
 ):
     """Update merchant profile (Stellar address and webhook URL)."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     
     if not merchant:
         raise HTTPException(
@@ -86,7 +87,7 @@ async def rotate_webhook_secret(
     - Old secret is permanently overwritten
     - Constant-time comparison used during verification (in webhook_service)
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 

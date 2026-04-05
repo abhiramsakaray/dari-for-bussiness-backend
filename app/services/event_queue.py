@@ -82,18 +82,22 @@ class EventService:
             entity_type: Type of entity (e.g., payment, invoice)
             entity_id: ID of the entity
             payload: Event payload data
-            merchant_id: Associated merchant ID
+            merchant_id: Associated merchant ID (string, will be converted to UUID)
             scheduled_for: Future time to process (for delayed events)
         
         Returns:
             Created Event object
         """
+        import uuid
+        # Convert merchant_id string to UUID if provided
+        merchant_uuid = uuid.UUID(merchant_id) if merchant_id and isinstance(merchant_id, str) else merchant_id
+        
         event = Event(
             event_type=event_type,
             entity_type=entity_type,
             entity_id=entity_id,
             payload=payload,
-            merchant_id=merchant_id,
+            merchant_id=merchant_uuid,
             status="pending",
             scheduled_for=scheduled_for
         )

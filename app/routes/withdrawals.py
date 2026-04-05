@@ -12,6 +12,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+import uuid
 
 from app.core import get_db, require_merchant, require_replay_protection
 from app.models import Merchant, Withdrawal, WithdrawalLimit, MerchantWallet
@@ -114,7 +115,7 @@ async def get_withdrawal_balance(
         get_evm_balances, get_stellar_balances, get_tron_balances, _with_chain_timeout,
     )
 
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -205,7 +206,7 @@ async def get_withdrawal_limits(
     
     Includes daily limits, fees, cooldown, and current daily usage.
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -269,7 +270,7 @@ async def create_withdrawal(
     Validates balance, limits, cooldown, and destination wallet before creating.
     The withdrawal will be processed asynchronously.
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -397,13 +398,14 @@ async def list_withdrawals(
     Supports pagination and filtering by status, chain, and token.
     All amounts returned in both USDC and merchant's local currency.
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
     currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
 
-    query = db.query(Withdrawal).filter(Withdrawal.merchant_id == current_user["id"])
+    merchant_uuid = uuid.UUID(current_user["id"])
+    query = db.query(Withdrawal).filter(Withdrawal.merchant_id == merchant_uuid)
 
     if status_filter:
         query = query.filter(Withdrawal.status == status_filter.lower())
@@ -440,13 +442,14 @@ async def get_withdrawal(
     db: Session = Depends(get_db),
 ):
     """Get details of a specific withdrawal."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant_uuid = uuid.UUID(current_user["id"])
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
     withdrawal = db.query(Withdrawal).filter(
         Withdrawal.id == withdrawal_id,
-        Withdrawal.merchant_id == current_user["id"],
+        Withdrawal.merchant_id == merchant_uuid,
     ).first()
 
     if not withdrawal:
@@ -469,13 +472,14 @@ async def cancel_withdrawal(
     Only withdrawals with status 'pending' can be cancelled.
     Processing or completed withdrawals cannot be reversed.
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant_uuid = uuid.UUID(current_user["id"])
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
     withdrawal = db.query(Withdrawal).filter(
         Withdrawal.id == withdrawal_id,
-        Withdrawal.merchant_id == current_user["id"],
+        Withdrawal.merchant_id == merchant_uuid,
     ).first()
 
     if not withdrawal:

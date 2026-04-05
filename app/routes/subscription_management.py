@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List
 import logging
+import uuid
 
 from app.core import get_db, get_current_user
 from app.models import Merchant, MerchantSubscription, SubscriptionTier, MerchantSubscriptionStatus
@@ -156,7 +157,7 @@ async def get_current_subscription(
     db: Session = Depends(get_db),
 ):
     """Get merchant's current subscription details."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -208,7 +209,7 @@ async def get_subscription_usage(
     db: Session = Depends(get_db),
 ):
     """Get current billing period usage and limits."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -265,7 +266,7 @@ async def upgrade_subscription(
     db: Session = Depends(get_db),
 ):
     """Upgrade or downgrade subscription tier."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -340,7 +341,7 @@ async def cancel_subscription(
     db: Session = Depends(get_db),
 ):
     """Cancel subscription (downgrade to free at end of billing period)."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -385,7 +386,7 @@ async def reactivate_subscription(
     db: Session = Depends(get_db),
 ):
     """Reactivate a cancelled subscription."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 

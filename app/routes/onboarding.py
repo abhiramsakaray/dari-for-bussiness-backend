@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 import secrets
 import logging
+import uuid
 
 from app.core import get_db, get_current_user, settings
 from app.core.security import create_access_token
@@ -43,7 +44,7 @@ async def get_onboarding_status(
     db: Session = Depends(get_db),
 ):
     """Get current onboarding progress for the authenticated merchant."""
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -82,7 +83,7 @@ async def set_business_details(
     Step 1: Provide business details.
     Called after signup (email/password or Google OAuth).
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -144,7 +145,7 @@ async def setup_wallets(
     1. {"chains": [...], "tokens": [...], "auto_generate": true}
     2. {"wallets": [{"chain": "stellar", "token": "USDC", "auto_generate": true}, ...]}
     """
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 
@@ -273,7 +274,7 @@ async def complete_onboarding(
     if request:
         logger.info(f"Request chains: {request.chains}, wallets: {request.wallets}, auto_generate: {request.auto_generate}")
     
-    merchant = db.query(Merchant).filter(Merchant.id == current_user["id"]).first()
+    merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
 

@@ -245,6 +245,13 @@ class Web3SubscriptionService:
             self.db.commit()
             raise ValueError(f"On-chain subscription creation failed: {e}")
 
+        # Check if transaction reverted on-chain
+        if result.get("status") == "reverted":
+            mandate.status = MandateStatus.REVOKED
+            mandate.revoked_at = datetime.utcnow()
+            self.db.commit()
+            raise ValueError(f"createSubscription reverted on-chain (tx={result.get('tx_hash')})")
+
         # Step 4: Extract on-chain subscription ID from events/receipt
         # For now, read the subscription count from the contract
         onchain_id = None
