@@ -9,8 +9,10 @@ Key design decisions:
   - Uses composite DB index (next_payment_at, status) for O(log n) lookups
   - Groups by chain for efficient relayer batching
   - Retry window: 12h intervals for 3 days (6 attempts) before marking FAILED
-  - State transitions: ACTIVE → PAST_DUE → FAILED
+  - State transitions: ACTIVE → PAST_DUE → PAUSED
   - Emits webhook events at each state transition
+  - Multi-chain dispatch: EVM → GaslessRelayer, Tron → TronRelayer,
+    Solana → SolanaRelayer, Stellar → SorobanRelayer
 """
 
 import asyncio
@@ -26,11 +28,17 @@ from app.models.models import (
     Web3Subscription, Web3SubscriptionPayment, Web3SubscriptionStatus,
     PaymentStatus, Merchant,
 )
-from app.services.gasless_relayer import relayer
+from app.services.gasless_relayer import relayer as evm_relayer
+from app.services.tron_relayer import tron_relayer
+from app.services.solana_relayer import solana_relayer
+from app.services.soroban_relayer import soroban_relayer
 from app.services.event_queue import EventService
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Chains handled by the EVM GaslessRelayer
+EVM_CHAINS = {"ethereum", "polygon", "base", "bsc", "arbitrum"}
 
 
 class SubscriptionScheduler:
@@ -38,7 +46,14 @@ class SubscriptionScheduler:
     Cron-based scheduler for Web3 subscription payment execution.
     
     Runs as an asyncio background task, scanning for due payments
-    and triggering the gasless relayer to execute them on-chain.
+    and triggering the correct chain-specific relayer to execute
+    them on-chain.
+
+    Chain dispatch:
+      - EVM chains (ethereum, polygon, base, bsc, arbitrum) → GaslessRelayer
+      - tron → TronRelayer
+      - solana → SolanaRelayer
+      - stellar → SorobanRelayer
     """
 
     def __init__(self):
@@ -136,13 +151,75 @@ class SubscriptionScheduler:
         finally:
             db.close()
 
+    async def _dispatch_execute_payment(
+        self, db: Session, sub: Web3Subscription
+    ) -> Dict:
+        """
+        Route execute_payment to the correct chain-specific relayer.
+
+        All relayers return the same dict shape:
+            {"tx_hash": str, "status": "confirmed"|"reverted", "gas_used": int, "block_number": int|None}
+        """
+        chain = sub.chain
+
+        if chain in EVM_CHAINS:
+            # EVM chains use the original GaslessRelayer
+            return await evm_relayer.execute_payment(
+                chain=chain,
+                onchain_subscription_id=sub.onchain_subscription_id,
+                db=db,
+                subscription_id=sub.id,
+            )
+
+        elif chain == "tron":
+            return await tron_relayer.execute_payment(
+                onchain_subscription_id=sub.onchain_subscription_id,
+                db=db,
+                subscription_id=sub.id,
+            )
+
+        elif chain == "solana":
+            # Solana requires additional account info from the subscription metadata
+            # The subscriber_address, token_address, and merchant_address are stored
+            # in the Web3Subscription model. ATAs must be derived or stored.
+            metadata = sub.subscription_metadata if hasattr(sub, 'subscription_metadata') else None
+            subscriber_ata = (metadata or {}).get("subscriber_token_account", "")
+            merchant_ata = (metadata or {}).get("merchant_token_account", "")
+
+            if not subscriber_ata or not merchant_ata:
+                raise RuntimeError(
+                    f"Solana subscription {sub.id} missing ATA metadata "
+                    f"(subscriber_token_account / merchant_token_account)"
+                )
+
+            return await solana_relayer.execute_payment(
+                onchain_subscription_id=sub.onchain_subscription_id,
+                subscriber=sub.subscriber_address,
+                mint=sub.token_address,
+                subscriber_token_account=subscriber_ata,
+                merchant_token_account=merchant_ata,
+                db=db,
+                subscription_id=sub.id,
+            )
+
+        elif chain == "stellar":
+            return await soroban_relayer.execute_payment(
+                onchain_subscription_id=sub.onchain_subscription_id,
+                db=db,
+                subscription_id=sub.id,
+            )
+
+        else:
+            raise ValueError(f"Unsupported chain for subscription execution: {chain}")
+
     async def _execute_subscription_payment(
         self, db: Session, sub: Web3Subscription
     ):
         """
-        Execute a single subscription payment via the relayer.
+        Execute a single subscription payment via the appropriate relayer.
         
         Handles success, failure, retry logic, and state transitions.
+        Uses the exact same logic across all chains.
         """
         if not sub.onchain_subscription_id:
             logger.warning(f"Subscription {sub.id} has no on-chain ID, skipping")
@@ -165,13 +242,8 @@ class SubscriptionScheduler:
         db.flush()
 
         try:
-            # Execute payment via relayer
-            result = await relayer.execute_payment(
-                chain=sub.chain,
-                onchain_subscription_id=sub.onchain_subscription_id,
-                db=db,
-                subscription_id=sub.id,
-            )
+            # Dispatch to the correct chain-specific relayer
+            result = await self._dispatch_execute_payment(db, sub)
 
             if result["status"] == "confirmed":
                 # ✅ Payment succeeded
@@ -198,7 +270,7 @@ class SubscriptionScheduler:
                 self.stats["total_payments_executed"] += 1
                 logger.info(
                     f"✅ Payment #{payment.payment_number} executed for sub {sub.id} "
-                    f"| tx={result['tx_hash'][:16]}..."
+                    f"on {sub.chain} | tx={result['tx_hash'][:16]}..."
                 )
 
                 # Emit event for webhooks

@@ -195,20 +195,23 @@ class Settings(BaseSettings):
     TRON_USDT_ADDRESS: str = ""
     TRON_USDC_ADDRESS: str = ""
     
-    # ============= SOLANA NETWORK (Future) =============
+    # ============= SOLANA NETWORK =============
     SOLANA_ENABLED: bool = False
     
     # Testnet (Devnet)
     SOLANA_TESTNET_RPC_URL: str = "https://api.devnet.solana.com"
     SOLANA_TESTNET_USDC_MINT: str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    SOLANA_TESTNET_USDT_MINT: str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
     
     # Mainnet
     SOLANA_MAINNET_RPC_URL: str = "https://api.mainnet-beta.solana.com"
     SOLANA_MAINNET_USDC_MINT: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    SOLANA_MAINNET_USDT_MINT: str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
     
     # Active (resolved by model_validator)
     SOLANA_RPC_URL: str = ""
     SOLANA_USDC_MINT: str = ""
+    SOLANA_USDT_MINT: str = ""
     
     # ============= HD WALLET (for deposit address generation) =============
     HD_WALLET_MNEMONIC: Optional[str] = None  # BIP39 mnemonic for HD wallet
@@ -252,16 +255,28 @@ class Settings(BaseSettings):
     STRUCTURED_LOGGING: bool = True
     
     # ============= WEB3 SUBSCRIPTIONS =============
-    # Gasless Relayer
+    # EVM Gasless Relayer
     RELAYER_PRIVATE_KEY: str = ""
     RELAYER_MAX_GAS_PRICE_GWEI: int = 100
     
-    # Subscription Contract Addresses (set per chain after deployment)
+    # EVM Subscription Contract Addresses (set per chain after deployment)
     SUBSCRIPTION_CONTRACT_ETHEREUM: str = ""
     SUBSCRIPTION_CONTRACT_POLYGON: str = ""
     SUBSCRIPTION_CONTRACT_BASE: str = ""
     SUBSCRIPTION_CONTRACT_BSC: str = ""
     SUBSCRIPTION_CONTRACT_ARBITRUM: str = ""
+    
+    # Tron Subscription Relayer
+    TRON_RELAYER_PRIVATE_KEY: str = ""
+    SUBSCRIPTION_CONTRACT_TRON: str = ""
+    
+    # Solana Subscription Relayer
+    SOLANA_RELAYER_PRIVATE_KEY: str = ""  # 64-byte keypair as hex
+    SUBSCRIPTION_PROGRAM_SOLANA: str = ""
+    
+    # Soroban (Stellar) Subscription Relayer
+    SOROBAN_RELAYER_SECRET_KEY: str = ""  # Stellar secret key (S...)
+    SUBSCRIPTION_CONTRACT_SOROBAN: str = ""
     
     # Scheduler
     SCHEDULER_INTERVAL_SECONDS: int = 60
@@ -320,6 +335,7 @@ class Settings(BaseSettings):
         # Solana
         self.SOLANA_RPC_URL = getattr(self, f"SOLANA_{net}_RPC_URL")
         self.SOLANA_USDC_MINT = getattr(self, f"SOLANA_{net}_USDC_MINT")
+        self.SOLANA_USDT_MINT = getattr(self, f"SOLANA_{net}_USDT_MINT")
         
         return self
     
