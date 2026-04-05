@@ -10,15 +10,15 @@ from app.core.database import Base
 # ============= ENUMS =============
 
 class PaymentStatus(str, enum.Enum):
-    CREATED = "created"
-    PENDING = "pending"  # Payment detected, waiting confirmations
-    PROCESSING = "processing"  # Payment being verified on-chain
-    CONFIRMED = "confirmed"  # Fully confirmed (alias kept for clarity)
-    PAID = "paid"  # Legacy alias for CONFIRMED — kept for backward compat
-    EXPIRED = "expired"
-    FAILED = "failed"
-    REFUNDED = "refunded"
-    PARTIALLY_REFUNDED = "partially_refunded"
+    CREATED = "CREATED"
+    PENDING = "PENDING"  # Payment detected, waiting confirmations
+    PROCESSING = "PROCESSING"  # Payment being verified on-chain
+    CONFIRMED = "CONFIRMED"  # Fully confirmed (alias kept for clarity)
+    PAID = "PAID"  # Legacy alias for CONFIRMED — kept for backward compat
+    EXPIRED = "EXPIRED"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
 
 
 class BlockchainNetwork(str, enum.Enum):
@@ -50,12 +50,12 @@ class InvoiceStatus(str, enum.Enum):
 
 class SubscriptionStatus(str, enum.Enum):
     """Subscription status"""
-    ACTIVE = "active"
-    PENDING_PAYMENT = "pending_payment"
-    PAUSED = "paused"
-    CANCELLED = "cancelled"
-    PAST_DUE = "past_due"
-    TRIALING = "trialing"
+    ACTIVE = "ACTIVE"
+    PENDING_PAYMENT = "PENDING_PAYMENT"
+    PAUSED = "PAUSED"
+    CANCELLED = "CANCELLED"
+    PAST_DUE = "PAST_DUE"
+    TRIALING = "TRIALING"
 
 
 class SubscriptionInterval(str, enum.Enum):
@@ -69,21 +69,21 @@ class SubscriptionInterval(str, enum.Enum):
 
 class RefundStatus(str, enum.Enum):
     """Refund status"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    QUEUED = "queued"  # Waiting for merchant to have sufficient funds
-    INSUFFICIENT_FUNDS = "insufficient_funds"  # Blocked due to low balance
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    QUEUED = "QUEUED"  # Waiting for merchant to have sufficient funds
+    INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"  # Blocked due to low balance
 
 
 class WithdrawalStatus(str, enum.Enum):
     """Withdrawal request status"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class MerchantCategory(str, enum.Enum):

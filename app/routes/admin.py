@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.core import get_db, require_admin
+from app.core.security import require_merchant_or_admin
 from app.models import Merchant, PaymentSession
 from app.schemas import MerchantListItem, PaymentListItem, MerchantDisable
 
@@ -123,3 +124,108 @@ async def gateway_health(
             "expired": expired_sessions
         }
     }
+
+
+# ============================================
+# Scheduler Management Endpoints
+# ============================================
+
+@router.get("/scheduler/status")
+async def get_scheduler_status(current_user: dict = Depends(require_admin)):
+    """Get current scheduler status and list all jobs (admin only)."""
+    try:
+        from app.services.refund_scheduler import scheduler, list_scheduled_jobs
+        
+        jobs = list_scheduled_jobs()
+        
+        return {
+            "status": "running" if scheduler.running else "stopped",
+            "jobs": jobs,
+            "total_jobs": len(jobs)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting scheduler status: {str(e)}"
+        )
+
+
+@router.post("/scheduler/refunds/trigger")
+async def trigger_refund_processing(current_user: dict = Depends(require_merchant_or_admin)):
+    """Manually trigger INSTANT refund processing (admin or merchant)."""
+    try:
+        from app.services.refund_processor import process_all_pending_refunds
+        
+        # Run async function in INSTANT mode
+        stats = await process_all_pending_refunds(mode="instant")
+        
+        return {
+            "message": "Refund processing completed (INSTANT MODE)",
+            "status": "success",
+            "mode": "instant",
+            "statistics": {
+                "total_pending_found": stats['total_pending'],
+                "successfully_processed": stats['processed'],
+                "failed": stats['failed'],
+                "errors": stats['errors']
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing refunds: {str(e)}"
+        )
+
+
+@router.post("/scheduler/refunds/start")
+async def start_refund_scheduler(
+    current_user: dict = Depends(require_admin),
+    interval_minutes: int = 60
+):
+    """Start the automatic refund scheduler (admin only)."""
+    try:
+        from app.services.refund_scheduler import scheduler, start_refund_scheduler
+        
+        if scheduler.running:
+            return {
+                "message": "Scheduler is already running",
+                "status": "already_running"
+            }
+        
+        start_refund_scheduler(interval_minutes=interval_minutes)
+        
+        return {
+            "message": f"Refund scheduler started (interval: {interval_minutes} minutes)",
+            "status": "started",
+            "interval_minutes": interval_minutes
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting scheduler: {str(e)}"
+        )
+
+
+@router.post("/scheduler/refunds/stop")
+async def stop_refund_scheduler(current_user: dict = Depends(require_admin)):
+    """Stop the automatic refund scheduler (admin only)."""
+    try:
+        from app.services.refund_scheduler import scheduler, stop_refund_scheduler
+        
+        if not scheduler.running:
+            return {
+                "message": "Scheduler is not running",
+                "status": "already_stopped"
+            }
+        
+        stop_refund_scheduler()
+        
+        return {
+            "message": "Refund scheduler stopped",
+            "status": "stopped"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping scheduler: {str(e)}"
+        )

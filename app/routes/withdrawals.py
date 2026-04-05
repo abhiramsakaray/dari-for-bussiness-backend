@@ -29,8 +29,7 @@ from app.services.currency_service import get_currency_for_country, build_local_
 
 router = APIRouter(
     prefix="/withdrawals", 
-    tags=["Withdrawals"],
-    dependencies=[Depends(require_replay_protection)]
+    tags=["Withdrawals"]
 )
 logger = logging.getLogger(__name__)
 
@@ -263,6 +262,7 @@ async def create_withdrawal(
     request: Request,
     current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db),
+    _: bool = Depends(require_replay_protection),
 ):
     """
     Create a new withdrawal request.
@@ -465,6 +465,7 @@ async def cancel_withdrawal(
     withdrawal_id: str,
     current_user: dict = Depends(require_merchant),
     db: Session = Depends(get_db),
+    _: bool = Depends(require_replay_protection),
 ):
     """
     Cancel a pending withdrawal.

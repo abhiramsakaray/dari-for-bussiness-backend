@@ -1023,7 +1023,7 @@ class RefundCreate(BaseModel):
     """Create a refund"""
     payment_session_id: str
     amount: Optional[Decimal] = Field(None, description="Amount to refund (full refund if not specified)")
-    refund_address: str = Field(..., description="Customer's wallet address for refund")
+    refund_address: Optional[str] = Field(None, description="Customer's wallet address for refund. May be optional for chains like Stellar if stored in session metadata.")
     reason: Optional[str] = None
     force: bool = Field(default=False, description="Force refund even with insufficient platform balance (will use external wallet)")
     queue_if_insufficient: bool = Field(default=False, description="Queue the refund to process when funds become available")
@@ -1076,6 +1076,48 @@ class RefundEligibility(BaseModel):
     message: str
     can_queue: bool = False  # Whether queueing is available
     can_force_external: bool = False  # Whether external wallet refund is possible
+    
+    # Payment details (auto-filled in refund form)
+    payer_wallet: Optional[str] = None  # Customer's wallet that made payment
+    payer_email: Optional[str] = None
+    payer_name: Optional[str] = None
+    amount_fiat: Optional[Decimal] = None
+    amount_token: Optional[Decimal] = None
+    fiat_currency: Optional[str] = None
+    token: Optional[str] = None
+    chain: Optional[str] = None
+    payment_type: Optional[str] = None  # "payment", "subscription", "invoice"
+    created_at: Optional[datetime] = None
+
+
+class CustomerTransaction(BaseModel):
+    """A customer's transaction (payment, subscription, invoice)"""
+    id: str
+    type: str  # "payment", "subscription_payment", "invoice"
+    email: str
+    name: Optional[str] = None
+    amount_fiat: Decimal
+    amount_token: Optional[Decimal] = None
+    fiat_currency: str
+    token: Optional[str] = None
+    chain: Optional[str] = None
+    wallet_address: Optional[str] = None
+    status: str  # payment status or subscription status
+    paid_at: Optional[datetime] = None
+    created_at: datetime
+    tx_hash: Optional[str] = None
+    refundable_amount: Optional[Decimal] = None
+    already_refunded: Optional[Decimal] = None
+    metadata: Optional[dict] = None
+
+
+class CustomerTransactionList(BaseModel):
+    """List of customer transactions"""
+    customer_email: str
+    customer_name: Optional[str] = None
+    total_transaction_value: Decimal
+    total_transactions: int
+    transactions: List[CustomerTransaction]
 
 
 class RefundList(BaseModel):

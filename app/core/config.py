@@ -287,6 +287,37 @@ class Settings(BaseSettings):
     # Enable/disable Web3 subscription scheduler
     WEB3_SUBSCRIPTIONS_ENABLED: bool = False
     
+    # Refund Scheduler Settings
+    REFUND_SCHEDULER_ENABLED: bool = True
+    REFUND_SCHEDULER_INTERVAL_MINUTES: int = 60  # Process pending refunds every 60 minutes
+    
+    # ============= BLOCKCHAIN RELAYERS (Real Refund Processing) =============
+    # Polygon Relayer (EVM refunds)
+    POLYGON_RELAYER_URL: str = ""  # https://relayer.example.com
+    POLYGON_RELAYER_API_KEY: str = ""
+    
+    # Stellar Relayer
+    STELLAR_RELAYER_URL: str = ""  # https://stellar-relayer.example.com
+    STELLAR_RELAYER_API_KEY: str = ""
+    STELLAR_MERCHANT_ADDRESS: str = ""  # Merchant's Stellar address for refunds
+    
+    # Solana Relayer
+    SOLANA_RELAYER_URL: str = ""  # https://solana-relayer.example.com
+    SOLANA_RELAYER_API_KEY: str = ""
+    SOLANA_MERCHANT_ADDRESS: str = ""  # Merchant's Solana pubkey for refunds
+    
+    # Soroban Relayer (Stellar Smart Contracts)
+    SOROBAN_RELAYER_URL: str = ""  # https://soroban-relayer.example.com
+    SOROBAN_RELAYER_API_KEY: str = ""
+    SOROBAN_MERCHANT_ADDRESS: str = ""  # Merchant's Soroban address for refunds
+    SOROBAN_USDC_CONTRACT: str = ""  # USDC contract on Soroban
+    SOROBAN_USDT_CONTRACT: str = ""  # USDT contract on Soroban
+    
+    # TRON Relayer
+    TRON_RELAYER_URL: str = ""  # https://tron-relayer.example.com
+    TRON_RELAYER_API_KEY: str = ""
+    TRON_MERCHANT_ADDRESS: str = ""  # Merchant's TRON address for refunds
+    
     @model_validator(mode="after")
     def resolve_network_config(self):
         """Set active config fields based on USE_MAINNET toggle."""

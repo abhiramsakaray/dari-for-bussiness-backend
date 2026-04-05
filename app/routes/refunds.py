@@ -18,21 +18,23 @@ import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional, List
+import asyncio
 
 from app.core.database import get_db
 from app.core.security import require_merchant, require_replay_protection
 from app.models.models import (
     Merchant, Refund, PaymentSession, PaymentStatus, Withdrawal,
-    RefundStatus as DBRefundStatus
+    RefundStatus as DBRefundStatus, Subscription, SubscriptionPayment
 )
 from app.schemas.schemas import (
-    RefundCreate, RefundResponse, RefundList, RefundStatus, RefundEligibility
+    RefundCreate, RefundResponse, RefundList, RefundStatus, RefundEligibility,
+    CustomerTransaction, CustomerTransactionList
 )
+from app.services.refund_processor import process_refund_on_chain, process_all_pending_refunds
 
 router = APIRouter(
     prefix="/refunds", 
-    tags=["Refunds"],
-    dependencies=[Depends(require_replay_protection)]
+    tags=["Refunds"]
 )
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,162 @@ def _get_settlement_status(db: Session, merchant: Merchant, token: str) -> str:
         return "partially_settled"
 
 
+@router.get("/customer/transactions", response_model=CustomerTransactionList)
+async def get_customer_transactions(
+    email: Optional[str] = Query(None, description="Customer email"),
+    phone: Optional[str] = Query(None, description="Customer phone number"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+):
+    """
+    Search customer by email or phone and get all their transactions.
+    
+    Returns all payments and subscriptions for the customer with refund eligibility info.
+    """
+    logger.info(f"[ENDPOINT] get_customer_transactions called with email={email}, phone={phone}")
+    logger.info(f"[ENDPOINT] current_user={current_user}")
+    
+    if not email and not phone:
+        raise HTTPException(status_code=400, detail="Email or phone number required")
+    
+    merchant_uuid = uuid.UUID(current_user["id"])
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_uuid).first()
+    
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found")
+    
+    # Search parameters
+    search_email = email.lower() if email else None
+    search_phone = phone.lower() if phone else None
+    
+    transactions = []
+    customer_name = None
+    total_value = Decimal("0")
+    
+    # Get payment sessions
+    payment_query = db.query(PaymentSession).filter(
+        PaymentSession.merchant_id == merchant_uuid
+    )
+    
+    if search_email:
+        payment_query = payment_query.filter(
+            func.lower(PaymentSession.payer_email) == search_email
+        )
+    
+    payments = payment_query.all()
+    
+    for payment in payments:
+        if payment.payer_email:
+            customer_name = payment.payer_name
+        
+        # Get refund info
+        existing_refunds = db.query(Refund).filter(
+            and_(
+                Refund.payment_session_id == payment.id,
+                Refund.status.in_([
+                    DBRefundStatus.PENDING, DBRefundStatus.PROCESSING,
+                    DBRefundStatus.COMPLETED, DBRefundStatus.QUEUED
+                ])
+            )
+        ).all()
+        total_refunded = sum(Decimal(str(r.amount)) for r in existing_refunds)
+        payment_amount = Decimal(str(payment.amount_token or payment.amount_usdc or 0))
+        refundable = payment_amount - total_refunded if payment.status in [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED] else Decimal("0")
+        
+        transactions.append(CustomerTransaction(
+            id=payment.id,
+            type=payment.session_metadata.get("type", "payment") if payment.session_metadata else "payment",
+            email=payment.payer_email or search_email or "",
+            name=payment.payer_name,
+            amount_fiat=payment.amount_fiat,
+            amount_token=Decimal(str(payment.amount_token or 0)),
+            fiat_currency=payment.fiat_currency,
+            token=payment.token,
+            chain=payment.chain,
+            wallet_address=payment.deposit_address or payment.merchant_wallet,
+            status=payment.status.value,
+            paid_at=payment.paid_at,
+            created_at=payment.created_at,
+            tx_hash=payment.tx_hash,
+            refundable_amount=refundable,
+            already_refunded=total_refunded,
+            metadata=payment.session_metadata
+        ))
+        
+        total_value += payment.amount_fiat
+    
+    # Get subscriptions
+    sub_query = db.query(Subscription).filter(
+        Subscription.merchant_id == merchant_uuid
+    )
+    
+    if search_email:
+        sub_query = sub_query.filter(
+            func.lower(Subscription.customer_email) == search_email
+        )
+    
+    subscriptions = sub_query.all()
+    
+    for sub in subscriptions:
+        customer_name = sub.customer_name or customer_name
+        
+        # Get subscription payments for refund info
+        sub_payments = db.query(SubscriptionPayment).filter(
+            SubscriptionPayment.subscription_id == sub.id,
+            SubscriptionPayment.status == PaymentStatus.PAID
+        ).all()
+        
+        for sub_payment in sub_payments:
+            # Get refunds for this subscription payment
+            existing_refunds = db.query(Refund).filter(
+                and_(
+                    Refund.id == sub_payment.payment_session_id,
+                    Refund.status.in_([
+                        DBRefundStatus.PENDING, DBRefundStatus.PROCESSING,
+                        DBRefundStatus.COMPLETED, DBRefundStatus.QUEUED
+                    ])
+                )
+            ).all()
+            total_refunded = sum(Decimal(str(r.amount)) for r in existing_refunds)
+            refundable = sub_payment.amount - total_refunded
+            
+            transactions.append(CustomerTransaction(
+                id=sub_payment.payment_session_id or f"sub_pay_{sub_payment.id}",
+                type="subscription_payment",
+                email=sub.customer_email,
+                name=sub.customer_name,
+                amount_fiat=sub_payment.amount,
+                amount_token=sub_payment.amount,
+                fiat_currency=sub_payment.fiat_currency or "USD",
+                token="USDC",
+                chain="stellar",
+                wallet_address=None,
+                status=sub_payment.status.value,
+                paid_at=sub_payment.created_at,
+                created_at=sub_payment.created_at,
+                tx_hash=None,
+                refundable_amount=refundable if not total_refunded else Decimal("0"),
+                already_refunded=total_refunded,
+                metadata={"subscription_id": str(sub.id), "plan_id": str(sub.plan_id)}
+            ))
+            
+            total_value += sub_payment.amount
+    
+    if not transactions and not search_email:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Sort by date descending
+    transactions.sort(key=lambda x: x.created_at, reverse=True)
+    
+    return CustomerTransactionList(
+        customer_email=search_email or search_phone or "",
+        customer_name=customer_name,
+        total_transaction_value=total_value,
+        total_transactions=len(transactions),
+        transactions=transactions
+    )
+
+
 @router.get("/eligibility/{payment_session_id}", response_model=RefundEligibility)
 async def check_refund_eligibility(
     payment_session_id: str,
@@ -141,6 +299,11 @@ async def check_refund_eligibility(
     
     refund_amount = amount if amount else max_refundable
     
+    # Determine payment type from metadata
+    payment_type = "payment"
+    if payment.session_metadata:
+        payment_type = payment.session_metadata.get("type", "payment")
+    
     # Check basic eligibility
     if payment.status not in [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED]:
         return RefundEligibility(
@@ -151,7 +314,17 @@ async def check_refund_eligibility(
             merchant_balance=Decimal("0"),
             sufficient_balance=False,
             settlement_status="unknown",
-            message=f"Cannot refund payment with status: {payment.status.value}"
+            message=f"Cannot refund payment with status: {payment.status.value}",
+            payer_wallet=payment.deposit_address or payment.merchant_wallet,
+            payer_email=payment.payer_email,
+            payer_name=payment.payer_name,
+            amount_fiat=payment.amount_fiat,
+            amount_token=Decimal(str(payment.amount_token or 0)),
+            fiat_currency=payment.fiat_currency,
+            token=payment.token,
+            chain=payment.chain,
+            payment_type=payment_type,
+            created_at=payment.created_at
         )
     
     if max_refundable <= 0:
@@ -163,7 +336,17 @@ async def check_refund_eligibility(
             merchant_balance=Decimal("0"),
             sufficient_balance=False,
             settlement_status="unknown",
-            message="Payment has already been fully refunded"
+            message="Payment has already been fully refunded",
+            payer_wallet=payment.deposit_address or payment.merchant_wallet,
+            payer_email=payment.payer_email,
+            payer_name=payment.payer_name,
+            amount_fiat=payment.amount_fiat,
+            amount_token=Decimal(str(payment.amount_token or 0)),
+            fiat_currency=payment.fiat_currency,
+            token=payment.token,
+            chain=payment.chain,
+            payment_type=payment_type,
+            created_at=payment.created_at
         )
     
     token = payment.token or "USDC"
@@ -192,7 +375,17 @@ async def check_refund_eligibility(
         settlement_status=settlement,
         message=message,
         can_queue=not sufficient,
-        can_force_external=not sufficient and settlement in ["settled_external", "partially_settled"]
+        can_force_external=not sufficient and settlement in ["settled_external", "partially_settled"],
+        payer_wallet=payment.deposit_address or payment.merchant_wallet,
+        payer_email=payment.payer_email,
+        payer_name=payment.payer_name,
+        amount_fiat=payment.amount_fiat,
+        amount_token=Decimal(str(payment.amount_token or 0)),
+        fiat_currency=payment.fiat_currency,
+        token=payment.token,
+        chain=payment.chain,
+        payment_type=payment_type,
+        created_at=payment.created_at
     )
 
 
@@ -201,7 +394,8 @@ async def create_refund(
     refund_data: RefundCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_merchant)
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
 ):
     """
     Create a refund for a completed payment.
@@ -375,8 +569,9 @@ async def create_refund(
     db.commit()
     db.refresh(refund)
     
-    # TODO: Process refund in background (send crypto on-chain)
-    # background_tasks.add_task(process_refund, refund.id)
+    # Process refund in background (send crypto on-chain)
+    if refund_status != DBRefundStatus.QUEUED:
+        background_tasks.add_task(process_refund, refund.id, str(merchant_uuid))
     
     return build_refund_response(refund)
 
@@ -397,7 +592,7 @@ async def list_refunds(
     """
     try:
         merchant_uuid = uuid.UUID(current_user["id"])
-        logger.info(f"Fetching refunds for merchant {merchant_uuid}, page={page}, page_size={page_size}, status={status}")
+        logger.info(f"Fetching refunds for merchant {merchant_uuid}, page={page}, page_size={page_size}, status={refund_status}")
         
         # Filter by merchant_id for security
         query = db.query(Refund).filter(Refund.merchant_id == merchant_uuid)
@@ -459,7 +654,8 @@ async def get_refund(
 async def cancel_refund(
     refund_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_merchant)
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
 ):
     """
     Cancel a pending or queued refund.
@@ -515,7 +711,8 @@ async def retry_refund(
     refund_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_merchant)
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
 ):
     """
     Retry a failed or queued refund.
@@ -590,11 +787,132 @@ async def retry_refund(
     return {"message": "Refund queued for retry", "id": refund_id}
 
 
+@router.post("/{refund_id}/force-retry")
+async def force_retry_refund(
+    refund_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
+):
+    """
+    Force retry a COMPLETED refund that failed on-chain.
+    
+    Use this when a refund shows COMPLETED in the database but the transaction
+    never actually went through on the blockchain. This will:
+    1. Clear the fake/incomplete tx_hash
+    2. Reset status back to PENDING
+    3. Trigger reprocessing on-chain
+    
+    This is useful for recovery when blockchain transactions fail despite 
+    being marked as successful.
+    """
+    merchant_uuid = uuid.UUID(current_user["id"])
+    
+    refund = db.query(Refund).filter(
+        and_(
+            Refund.id == refund_id,
+            Refund.merchant_id == merchant_uuid
+        )
+    ).first()
+    
+    if not refund:
+        raise HTTPException(status_code=404, detail="Refund not found")
+    
+    if refund.status != DBRefundStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only force-retry COMPLETED refunds. Current status: {refund.status.value}"
+        )
+    
+    # Clear the failed transaction hash
+    old_tx_hash = refund.tx_hash
+    refund.tx_hash = None
+    refund.status = DBRefundStatus.PENDING
+    refund.failure_reason = f"Force retry after on-chain failure (was: {old_tx_hash})"
+    
+    logger.info(
+        f"Force retrying refund {refund_id}: "
+        f"Cleared tx_hash '{old_tx_hash}', reset to PENDING"
+    )
+    
+    db.commit()
+    
+    return {
+        "message": "Refund queued for force retry",
+        "id": refund_id,
+        "previous_tx_hash": old_tx_hash,
+        "new_status": "PENDING"
+    }
+
+
+@router.patch("/{refund_id}/update-address")
+async def update_refund_address(
+    refund_id: str,
+    refund_address: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
+):
+    """
+    Update refund address for a FAILED refund and reset to PENDING.
+    
+    This is used when a refund was created without a recipient address.
+    Updates the address and resets the refund to PENDING status so it can
+    be reprocessed on-chain.
+    
+    Query params:
+    - refund_address: The blockchain address to refund to
+    """
+    merchant_uuid = uuid.UUID(current_user["id"])
+    
+    if not refund_address or refund_address.strip() == "":
+        raise HTTPException(status_code=400, detail="refund_address is required")
+    
+    refund = db.query(Refund).filter(
+        and_(
+            Refund.id == refund_id,
+            Refund.merchant_id == merchant_uuid
+        )
+    ).first()
+    
+    if not refund:
+        raise HTTPException(status_code=404, detail="Refund not found")
+    
+    if refund.status != DBRefundStatus.FAILED:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Can only update address for FAILED refunds. Current status: {refund.status.value}"
+        )
+    
+    old_address = refund.refund_address
+    refund.refund_address = refund_address.strip()
+    refund.status = DBRefundStatus.PENDING
+    refund.failure_reason = f"Address updated from '{old_address or '(empty)'}' to '{refund_address}', reset to PENDING"
+    refund.processed_at = None  # Clear processed_at so it gets reprocessed
+    
+    logger.info(
+        f"Updated refund {refund_id} address: "
+        f"'{old_address or '(empty)'}' → '{refund_address}', status → PENDING"
+    )
+    
+    db.commit()
+    
+    return {
+        "message": "Refund address updated and reset to PENDING",
+        "id": refund_id,
+        "previous_address": old_address or "(empty)",
+        "new_address": refund_address,
+        "new_status": "PENDING"
+    }
+
+
 @router.post("/process-queued")
 async def process_queued_refunds(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_merchant)
+    current_user: dict = Depends(require_merchant),
+    _: bool = Depends(require_replay_protection)
 ):
     """
     Attempt to process all queued refunds for this merchant.
@@ -682,6 +1000,52 @@ async def process_queued_refunds(
     }
 
 
+@router.post("/process-pending")
+async def process_pending_refunds(
+    current_user: dict = Depends(require_merchant),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Process all PENDING refunds immediately.
+    
+    Sends all refunds in PENDING status to the blockchain.
+    Returns statistics about the processing.
+    """
+    merchant_id = current_user["id"]
+    logger.info(f"[ENDPOINT] process_pending_refunds called by merchant {merchant_id}")
+    
+    # Run processing in background
+    if background_tasks:
+        background_tasks.add_task(process_pending_refunds_background, merchant_id)
+        return {
+            "message": "Pending refunds processing started in background",
+            "status": "submitted"
+        }
+    else:
+        # Direct processing (for testing)
+        stats = await process_all_pending_refunds()
+        return {
+            "message": "Pending refunds processed",
+            "stats": stats
+        }
+
+
+def process_pending_refunds_background(merchant_id: str):
+    """Background task to process all pending refunds"""
+    try:
+        logger.info(f"[BACKGROUND] Starting pending refund processor for merchant {merchant_id}")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        stats = loop.run_until_complete(process_all_pending_refunds())
+        loop.close()
+        logger.info(
+            f"[BACKGROUND] Pending refund processor completed: "
+            f"{stats['processed']} processed, {stats['failed']} failed"
+        )
+    except Exception as e:
+        logger.error(f"[BACKGROUND] Error in pending refund processor: {str(e)}", exc_info=True)
+
+
 def build_refund_response(refund: Refund) -> RefundResponse:
     """Build RefundResponse from model"""
     return RefundResponse(
@@ -703,3 +1067,21 @@ def build_refund_response(refund: Refund) -> RefundResponse:
         processed_at=refund.processed_at,
         completed_at=refund.completed_at
     )
+
+
+# Background task wrapper for processing refunds asynchronously
+def process_refund(refund_id: str, merchant_id: str):
+    """
+    Wrapper function for background refund processing.
+    Runs the async refund processor in a new event loop.
+    Called by FastAPI BackgroundTasks.
+    """
+    try:
+        logger.info(f"[BACKGROUND] Starting refund processor for refund_id={refund_id}, merchant_id={merchant_id}")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(process_refund_on_chain(refund_id, merchant_id))
+        loop.close()
+        logger.info(f"[BACKGROUND] Refund processor completed with result={result}")
+    except Exception as e:
+        logger.error(f"[BACKGROUND] Error in refund processor: {str(e)}", exc_info=True)

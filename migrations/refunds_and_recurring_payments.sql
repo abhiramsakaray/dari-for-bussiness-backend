@@ -17,11 +17,11 @@ ALTER TABLE refunds ADD COLUMN IF NOT EXISTS failure_reason VARCHAR(500);
 -- Note: Only run these if the values don't already exist
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'queued' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'refundstatus')) THEN
-        ALTER TYPE refundstatus ADD VALUE 'queued';
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'QUEUED' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'refundstatus')) THEN
+        ALTER TYPE refundstatus ADD VALUE 'QUEUED';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'insufficient_funds' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'refundstatus')) THEN
-        ALTER TYPE refundstatus ADD VALUE 'insufficient_funds';
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'INSUFFICIENT_FUNDS' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'refundstatus')) THEN
+        ALTER TYPE refundstatus ADD VALUE 'INSUFFICIENT_FUNDS';
     END IF;
 END
 $$;

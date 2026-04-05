@@ -30,6 +30,8 @@ from app.routes import (
     web3_subscriptions,
     # Tax & compliance reports
     tax_reports,
+    # Transactions & refund tracking
+    transactions,
 )
 
 # Configure logging
@@ -48,11 +50,20 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS - Allow all origins for e-commerce integrations
+# Configure CORS - Allow frontend development servers and e-commerce integrations
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # Must be False when allow_origins is ["*"]
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://localhost:4200",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:4200",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -121,6 +132,7 @@ app.include_router(payment_links.pay_router)  # Public payment link checkout
 app.include_router(invoices.router)  # Invoice management
 app.include_router(subscriptions.router)  # Recurring payments
 app.include_router(refunds.router)  # Refund processing
+app.include_router(transactions.router)  # Transaction tracking with refund data
 app.include_router(analytics.router)  # Merchant analytics
 app.include_router(team.router)  # Team management
 app.include_router(onboarding.router)  # Merchant onboarding flow
@@ -252,6 +264,17 @@ async def startup_event():
     else:
         logger.info("ℹ️  Web3 subscription scheduler disabled (set WEB3_SUBSCRIPTIONS_ENABLED=true to enable)")
     
+    # Start refund scheduler if enabled
+    try:
+        if settings.REFUND_SCHEDULER_ENABLED:
+            from app.services.refund_scheduler import start_refund_scheduler
+            start_refund_scheduler(interval_minutes=settings.REFUND_SCHEDULER_INTERVAL_MINUTES)
+            logger.info(f"✅ Refund scheduler started (processes every {settings.REFUND_SCHEDULER_INTERVAL_MINUTES} minutes)")
+        else:
+            logger.info("ℹ️  Refund scheduler disabled (set REFUND_SCHEDULER_ENABLED=true to enable)")
+    except Exception as e:
+        logger.error(f"Failed to start refund scheduler: {e}", exc_info=True)
+    
     logger.info("=" * 60)
 
 
@@ -263,6 +286,14 @@ async def shutdown_event():
     if settings.WEB3_SUBSCRIPTIONS_ENABLED:
         from app.services.subscription_scheduler import scheduler
         await scheduler.stop()
+    
+    # Stop refund scheduler
+    try:
+        from app.services.refund_scheduler import stop_refund_scheduler
+        stop_refund_scheduler()
+    except Exception as e:
+        logger.error(f"Error stopping refund scheduler: {e}")
+    
     logger.info("Shutting down Dari for Business...")
 
 

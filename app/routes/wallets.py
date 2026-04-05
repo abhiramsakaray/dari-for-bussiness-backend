@@ -223,6 +223,18 @@ async def get_balance_dashboard(
     )
 
 
+@router.get("/balance", response_model=BalanceDashboardResponse)
+async def get_balance(
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Alias endpoint for /dashboard.
+    Get a complete balance dashboard with live on-chain balances.
+    """
+    return await get_balance_dashboard(current_user, db)
+
+
 @router.post("", response_model=MerchantWalletResponse, status_code=status.HTTP_201_CREATED)
 async def add_wallet(
     wallet_data: MerchantWalletCreate,
@@ -302,10 +314,19 @@ async def get_wallet(
     """
     Get wallet for a specific blockchain network.
     """
+    # Validate chain is a valid blockchain (not a path like 'balance')
+    valid_chains = {"stellar", "ethereum", "polygon", "base", "bsc", "arbitrum", "tron", "solana"}
+    chain_lower = chain.lower()
+    if chain_lower not in valid_chains:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid blockchain: {chain}. Must be one of: {', '.join(valid_chains)}"
+        )
+    
     merchant_uuid = uuid.UUID(current_user["id"])
     wallet = db.query(MerchantWallet).filter(
         MerchantWallet.merchant_id == merchant_uuid,
-        MerchantWallet.chain == chain.lower(),
+        MerchantWallet.chain == chain_lower,
         MerchantWallet.is_active == True
     ).first()
     
