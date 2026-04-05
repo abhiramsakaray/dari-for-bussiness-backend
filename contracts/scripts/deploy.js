@@ -96,6 +96,21 @@ function getTokenAddresses(chainId) {
             USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
             USDT: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
         },
+        // Arbitrum Sepolia
+        421614: {
+            USDC: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+            USDT: "0x3870546cfd600ba87e4726f7B8e3B8bB7E5EE262",
+        },
+        // BSC Mainnet
+        56: {
+            USDC: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+            USDT: "0x55d398326f99059fF775485246999027B3197955",
+        },
+        // BSC Testnet
+        97: {
+            USDC: "0x64544969ed7EBf5f083679233325356EbE738930",
+            USDT: "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd",
+        },
         // Hardhat
         31337: {},
     };
@@ -111,6 +126,9 @@ function getChainEnvName(chainId) {
         8453: "BASE",
         84532: "BASE",
         42161: "ARBITRUM",
+        421614: "ARBITRUM",
+        56: "BSC",
+        97: "BSC",
         31337: "LOCAL",
     };
     return names[chainId] || "UNKNOWN";

@@ -280,6 +280,7 @@ class Web3SubscriptionService:
             max_retries=0,
             retry_interval_hours=24,
             grace_period_days=3,
+            first_failed_at=None,  # Track first failure separately
         )
 
         self.db.add(subscription)
@@ -327,18 +328,22 @@ class Web3SubscriptionService:
         """
         import asyncio
         
-        # Calculate time remaining until the subscription's start time on-chain
-        # The relayer now uses a 5s buffer for 'safe_start_time' to avoid createSubscription reverts.
-        # We must wait until block.timestamp >= nextPayment to avoid PaymentNotDue() revert.
+        # The relayer uses block.timestamp + 5s as safe_start_time to avoid createSubscription reverts.
+        # We must wait until that time passes before calling executePayment to avoid PaymentNotDue() revert.
+        # The subscription's next_payment_at is already set to the actual on-chain startTime from the relayer.
         now_ts = int(datetime.utcnow().timestamp())
         start_ts = int(subscription.next_payment_at.timestamp())
-        wait_seconds = max(5, start_ts - now_ts + 1) # Minimum 5s for indexing, +1s to avoid race
-
-        logger.info(
-            f"⚡ Waiting {wait_seconds}s before first payment for sub {subscription.id} "
-            f"to pass the safe_start_time buffer (onchain_id={subscription.onchain_subscription_id})"
-        )
-        await asyncio.sleep(wait_seconds)
+        
+        # Wait until the on-chain nextPayment time has passed, with a small buffer
+        wait_seconds = max(0, start_ts - now_ts + 2)  # +2s buffer for clock drift
+        
+        if wait_seconds > 0:
+            logger.info(
+                f"⚡ Waiting {wait_seconds}s before first payment for sub {subscription.id} "
+                f"(onchain_id={subscription.onchain_subscription_id})"
+            )
+            await asyncio.sleep(wait_seconds)
+        
         try:
             pay_result = await relayer.execute_payment(
                 chain=subscription.chain,
@@ -354,6 +359,8 @@ class Web3SubscriptionService:
                 subscription.next_payment_at = datetime.utcnow() + timedelta(
                     seconds=subscription.interval_seconds
                 )
+                subscription.failed_payment_count = 0
+                subscription.first_failed_at = None
                 subscription.updated_at = datetime.utcnow()
                 self.db.commit()
                 logger.info(
@@ -363,6 +370,8 @@ class Web3SubscriptionService:
             else:
                 subscription.status = Web3SubscriptionStatus.PAST_DUE
                 subscription.failed_payment_count = 1
+                subscription.first_failed_at = datetime.utcnow()
+                subscription.next_payment_at = datetime.utcnow() + timedelta(hours=12)  # Retry in 12h
                 subscription.updated_at = datetime.utcnow()
                 self.db.commit()
                 logger.warning(
@@ -374,6 +383,8 @@ class Web3SubscriptionService:
             try:
                 subscription.status = Web3SubscriptionStatus.PAST_DUE
                 subscription.failed_payment_count = 1
+                subscription.first_failed_at = datetime.utcnow()
+                subscription.next_payment_at = datetime.utcnow() + timedelta(hours=12)  # Retry in 12h
                 subscription.updated_at = datetime.utcnow()
                 self.db.commit()
             except Exception:

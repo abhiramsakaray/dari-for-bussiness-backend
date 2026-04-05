@@ -192,6 +192,7 @@ class SubscriptionScheduler:
                 )
                 sub.status = Web3SubscriptionStatus.ACTIVE
                 sub.failed_payment_count = 0
+                sub.first_failed_at = None  # Reset failure tracking on success
                 sub.updated_at = datetime.utcnow()
 
                 self.stats["total_payments_executed"] += 1
@@ -242,6 +243,10 @@ class SubscriptionScheduler:
         payment.status = PaymentStatus.FAILED
         sub.failed_payment_count += 1
 
+        # Track first failure timestamp
+        if sub.first_failed_at is None:
+            sub.first_failed_at = datetime.utcnow()
+
         retry_interval_hours = max(
             1, int(getattr(settings, "SCHEDULER_RETRY_INTERVAL_HOURS", 12))
         )
@@ -255,7 +260,7 @@ class SubscriptionScheduler:
         grace_period_hours = grace_period_days * 24
 
         # How long has this subscription been past due?
-        first_failure_at = sub.next_payment_at or datetime.utcnow()
+        first_failure_at = sub.first_failed_at or datetime.utcnow()
         hours_past_due = (datetime.utcnow() - first_failure_at).total_seconds() / 3600
 
         if hours_past_due >= grace_period_hours:

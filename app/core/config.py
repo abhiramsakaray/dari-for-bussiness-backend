@@ -131,6 +131,50 @@ class Settings(BaseSettings):
     BASE_CHAIN_ID: int = 0
     BASE_USDC_ADDRESS: str = ""
     
+    # ============= BSC (BNB Smart Chain) =============
+    BSC_ENABLED: bool = True
+    BSC_CONFIRMATIONS: int = 15
+    
+    # Testnet (BSC Testnet)
+    BSC_TESTNET_RPC_URL: str = "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+    BSC_TESTNET_CHAIN_ID: int = 97
+    BSC_TESTNET_USDC_ADDRESS: str = "0x64544969ed7EBf5f083679233325356EbE738930"
+    BSC_TESTNET_USDT_ADDRESS: str = "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd"
+    
+    # Mainnet
+    BSC_MAINNET_RPC_URL: str = "https://bsc-dataseed.bnbchain.org"
+    BSC_MAINNET_CHAIN_ID: int = 56
+    BSC_MAINNET_USDC_ADDRESS: str = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
+    BSC_MAINNET_USDT_ADDRESS: str = "0x55d398326f99059fF775485246999027B3197955"
+    
+    # Active (resolved by model_validator)
+    BSC_RPC_URL: str = ""
+    BSC_CHAIN_ID: int = 0
+    BSC_USDC_ADDRESS: str = ""
+    BSC_USDT_ADDRESS: str = ""
+    
+    # ============= ARBITRUM =============
+    ARBITRUM_ENABLED: bool = True
+    ARBITRUM_CONFIRMATIONS: int = 12
+    
+    # Testnet (Arbitrum Sepolia)
+    ARBITRUM_TESTNET_RPC_URL: str = "https://sepolia-rollup.arbitrum.io/rpc"
+    ARBITRUM_TESTNET_CHAIN_ID: int = 421614
+    ARBITRUM_TESTNET_USDC_ADDRESS: str = "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"
+    ARBITRUM_TESTNET_USDT_ADDRESS: str = "0x3870546cfd600ba87e4726f7B8e3B8bB7E5EE262"
+    
+    # Mainnet
+    ARBITRUM_MAINNET_RPC_URL: str = "https://arb1.arbitrum.io/rpc"
+    ARBITRUM_MAINNET_CHAIN_ID: int = 42161
+    ARBITRUM_MAINNET_USDC_ADDRESS: str = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    ARBITRUM_MAINNET_USDT_ADDRESS: str = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+    
+    # Active (resolved by model_validator)
+    ARBITRUM_RPC_URL: str = ""
+    ARBITRUM_CHAIN_ID: int = 0
+    ARBITRUM_USDC_ADDRESS: str = ""
+    ARBITRUM_USDT_ADDRESS: str = ""
+    
     # ============= TRON NETWORK =============
     TRON_ENABLED: bool = True
     TRON_API_KEY: Optional[str] = None
@@ -216,6 +260,7 @@ class Settings(BaseSettings):
     SUBSCRIPTION_CONTRACT_ETHEREUM: str = ""
     SUBSCRIPTION_CONTRACT_POLYGON: str = ""
     SUBSCRIPTION_CONTRACT_BASE: str = ""
+    SUBSCRIPTION_CONTRACT_BSC: str = ""
     SUBSCRIPTION_CONTRACT_ARBITRUM: str = ""
     
     # Scheduler
@@ -255,6 +300,18 @@ class Settings(BaseSettings):
         self.BASE_CHAIN_ID = getattr(self, f"BASE_{net}_CHAIN_ID")
         self.BASE_USDC_ADDRESS = getattr(self, f"BASE_{net}_USDC_ADDRESS")
         
+        # BSC
+        self.BSC_RPC_URL = getattr(self, f"BSC_{net}_RPC_URL")
+        self.BSC_CHAIN_ID = getattr(self, f"BSC_{net}_CHAIN_ID")
+        self.BSC_USDC_ADDRESS = getattr(self, f"BSC_{net}_USDC_ADDRESS")
+        self.BSC_USDT_ADDRESS = getattr(self, f"BSC_{net}_USDT_ADDRESS")
+        
+        # Arbitrum
+        self.ARBITRUM_RPC_URL = getattr(self, f"ARBITRUM_{net}_RPC_URL")
+        self.ARBITRUM_CHAIN_ID = getattr(self, f"ARBITRUM_{net}_CHAIN_ID")
+        self.ARBITRUM_USDC_ADDRESS = getattr(self, f"ARBITRUM_{net}_USDC_ADDRESS")
+        self.ARBITRUM_USDT_ADDRESS = getattr(self, f"ARBITRUM_{net}_USDT_ADDRESS")
+        
         # Tron
         self.TRON_API_URL = getattr(self, f"TRON_{net}_API_URL")
         self.TRON_USDT_ADDRESS = getattr(self, f"TRON_{net}_USDT_ADDRESS")
@@ -280,6 +337,10 @@ class Settings(BaseSettings):
             chains.append("polygon")
         if self.BASE_ENABLED:
             chains.append("base")
+        if self.BSC_ENABLED:
+            chains.append("bsc")
+        if self.ARBITRUM_ENABLED:
+            chains.append("arbitrum")
         if self.TRON_ENABLED:
             chains.append("tron")
         if self.SOLANA_ENABLED:

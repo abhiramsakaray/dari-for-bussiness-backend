@@ -6,11 +6,14 @@ Starts all enabled chain listeners concurrently:
 - Ethereum (USDC, USDT, PYUSD)
 - Polygon (USDC, USDT)
 - Base (USDC)
+- BSC (USDC, USDT)
+- Arbitrum (USDC, USDT)
 - Tron (USDT, USDC)
+- Solana (USDC) — Requires solders/anchorpy
 
 Usage:
-    python run_listeners.py                # Start all enabled listeners
-    python run_listeners.py polygon tron   # Start only specific chains
+    python run_listeners.py                     # Start all enabled listeners
+    python run_listeners.py polygon tron bsc    # Start only specific chains
 """
 
 import asyncio
@@ -54,13 +57,13 @@ async def run(chains=None):
             logger.error(f"Failed to create Stellar listener: {e}")
 
     # EVM chains
-    for chain in ["ethereum", "polygon", "base"]:
+    for chain in ["ethereum", "polygon", "base", "bsc", "arbitrum"]:
         if chain in enabled:
             try:
                 listener = create_evm_listener(chain)
                 listener.set_payment_callback(process_evm_payment)
                 listeners.append(listener)
-                logger.info(f"Created {chain.title()} listener")
+                logger.info(f"Created {chain.upper()} listener")
             except Exception as e:
                 logger.error(f"Failed to create {chain} listener: {e}")
 

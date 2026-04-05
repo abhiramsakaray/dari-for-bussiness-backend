@@ -1,4 +1,4 @@
-"""
+﻿"""
 Shopify Order Creation Service
 Handles creating draft orders and completing them after payment
 """
@@ -39,15 +39,15 @@ async def create_shopify_order(session: PaymentSession, shopify_store: str, acce
                 "fulfillment_status": None,
                 "send_receipt": True,
                 "send_fulfillment_receipt": False,
-                "note": f"Paid with ChainPe - Tx: {session.tx_hash}",
-                "tags": "chainpe, crypto-payment",
+                "note": f"Paid with Dari - Tx: {session.tx_hash}",
+                "tags": "dari, crypto-payment",
                 "transactions": [
                     {
                         "kind": "sale",
                         "status": "success",
                         "amount": str(session.amount_fiat),
                         "currency": session.fiat_currency,
-                        "gateway": "ChainPe"
+                        "gateway": "Dari"
                     }
                 ],
                 "line_items": metadata.get("line_items", []),

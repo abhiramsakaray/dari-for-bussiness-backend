@@ -1,4 +1,4 @@
-"""
+﻿"""
 Subscriptions API Routes
 Recurring payment management for merchants
 """
@@ -179,7 +179,7 @@ async def get_plan_share_link(
     Generate a shareable hosted subscription page URL for frontend use.
 
     This link is meant to be embedded in your website, pricing cards,
-    email campaigns, and CTA buttons to redirect users to ChainPe's
+    email campaigns, and CTA buttons to redirect users to Dari's
     hosted subscription approval flow.
     """
     plan = db.query(SubscriptionPlan).filter(

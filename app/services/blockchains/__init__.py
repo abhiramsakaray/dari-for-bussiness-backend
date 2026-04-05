@@ -6,8 +6,10 @@ Supports multiple blockchain networks for stablecoin payments:
 - Ethereum (USDC, USDT, PYUSD)
 - Polygon (USDC, USDT)
 - Base (USDC)
-- Tron (USDT)
-- Solana (USDC) - Future
+- BSC (USDC, USDT)
+- Arbitrum (USDC, USDT)
+- Tron (USDT, USDC)
+- Solana (USDC)
 """
 
 from .base import BlockchainListener, BlockchainConfig, PaymentInfo

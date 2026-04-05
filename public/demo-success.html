@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Payment Successful - ChainPe Demo</title>
-    <script src="https://chainpe.onrender.com/chainpe-button.js"></script>
+    <title>Payment Successful - Dari Demo</title>
+    <script src="https://Dari.onrender.com/Dari-button.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -159,13 +159,13 @@
             document.getElementById('payment-status').innerHTML = 
                 '<div class="error">❌ No session ID found. Please check your payment link.</div>';
         } else {
-            // Initialize ChainPe SDK
-            ChainPe.init({
+            // Initialize Dari SDK
+            Dari.init({
                 apiKey: 'pk_test_demo123456789'  // Replace with your actual API key
             });
             
             // Verify payment
-            ChainPe.verifyPayment(sessionId)
+            Dari.verifyPayment(sessionId)
                 .then(session => {
                     console.log('Payment verified:', session);
                     

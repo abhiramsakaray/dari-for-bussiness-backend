@@ -1,4 +1,4 @@
-"""
+﻿"""
 E-commerce Platform Integration Endpoints
 Easy integration for Shopify, WooCommerce, and other platforms
 """
@@ -49,7 +49,7 @@ async def create_simple_checkout(
     
     Returns:
     {
-        "checkout_url": "https://chainpe.onrender.com/checkout/pay_xxx",
+        "checkout_url": "https://Dari.onrender.com/checkout/pay_xxx",
         "session_id": "pay_xxx"
     }
     """
@@ -113,7 +113,7 @@ async def get_payment_button(api_key: str):
     
     button_html = f"""
     <script>
-    function openChainPeCheckout(amount, orderId, successUrl, cancelUrl) {{
+    function openDariCheckout(amount, orderId, successUrl, cancelUrl) {{
         const checkoutData = {{
             api_key: '{api_key}',
             amount: amount,
@@ -123,7 +123,7 @@ async def get_payment_button(api_key: str):
             cancel_url: cancelUrl
         }};
         
-        fetch('https://chainpe.onrender.com/integrations/create-checkout', {{
+        fetch('https://Dari.onrender.com/integrations/create-checkout', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify(checkoutData)
@@ -136,9 +136,9 @@ async def get_payment_button(api_key: str):
     </script>
     
     <button 
-        onclick="openChainPeCheckout('50.00', 'ORDER-123', window.location.href + '?payment=success', window.location.href + '?payment=cancel')"
+        onclick="openDariCheckout('50.00', 'ORDER-123', window.location.href + '?payment=success', window.location.href + '?payment=cancel')"
         style="background: #000; color: #fff; padding: 12px 24px; border: none; cursor: pointer; font-weight: 600;">
-        Pay with ChainPe
+        Pay with Dari
     </button>
     """
     
@@ -195,7 +195,7 @@ async def shopify_install_page():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ChainPe for Shopify</title>
+        <title>Dari for Shopify</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
             h1 { color: #000; }
@@ -204,11 +204,11 @@ async def shopify_install_page():
         </style>
     </head>
     <body>
-        <h1>ChainPe Payment Gateway for Shopify</h1>
+        <h1>Dari Payment Gateway for Shopify</h1>
         
         <div class="step">
             <h3>Step 1: Get Your API Key</h3>
-            <p>Sign up at <code>https://chainpe.onrender.com/docs</code> and create a merchant account to get your API key.</p>
+            <p>Sign up at <code>https://Dari.onrender.com/docs</code> and create a merchant account to get your API key.</p>
         </div>
         
         <div class="step">
@@ -220,10 +220,10 @@ async def shopify_install_page():
             <h3>Step 3: Add Payment Button</h3>
             <p>Add this code to your Shopify theme:</p>
             <pre><code>
-&lt;button onclick="payWithChainPe()"&gt;Pay with Crypto&lt;/button&gt;
+&lt;button onclick="payWithDari()"&gt;Pay with Crypto&lt;/button&gt;
 &lt;script&gt;
-function payWithChainPe() {
-    fetch('https://chainpe.onrender.com/integrations/create-checkout', {
+function payWithDari() {
+    fetch('https://Dari.onrender.com/integrations/create-checkout', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -258,7 +258,7 @@ async def woocommerce_plugin_info():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ChainPe for WooCommerce</title>
+        <title>Dari for WooCommerce</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
             h1 { color: #000; }
@@ -267,12 +267,12 @@ async def woocommerce_plugin_info():
         </style>
     </head>
     <body>
-        <h1>ChainPe Payment Gateway for WooCommerce</h1>
+        <h1>Dari Payment Gateway for WooCommerce</h1>
         
         <div class="step">
             <h3>Integration Steps</h3>
             <ol>
-                <li>Get your ChainPe API key from the dashboard</li>
+                <li>Get your Dari API key from the dashboard</li>
                 <li>Add custom payment gateway in WooCommerce settings</li>
                 <li>Use our REST API endpoint for checkout creation</li>
             </ol>
@@ -281,8 +281,8 @@ async def woocommerce_plugin_info():
         <div class="step">
             <h3>PHP Integration Example</h3>
             <pre><code>
-// Create ChainPe checkout
-$response = wp_remote_post('https://chainpe.onrender.com/integrations/create-checkout', array(
+// Create Dari checkout
+$response = wp_remote_post('https://Dari.onrender.com/integrations/create-checkout', array(
     'body' => json_encode(array(
         'api_key' => 'YOUR_API_KEY',
         'amount' => $order->get_total(),
@@ -290,7 +290,7 @@ $response = wp_remote_post('https://chainpe.onrender.com/integrations/create-che
         'order_id' => $order->get_id(),
         'success_url' => $this->get_return_url($order),
         'cancel_url' => wc_get_checkout_url(),
-        'webhook_url' => get_site_url() . '/wc-api/chainpe_webhook'
+        'webhook_url' => get_site_url() . '/wc-api/dari_webhook'
     )),
     'headers' => array('Content-Type' => 'application/json')
 ));

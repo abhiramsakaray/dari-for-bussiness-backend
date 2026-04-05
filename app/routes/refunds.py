@@ -1,4 +1,4 @@
-"""
+﻿"""
 Refunds API Routes
 Process refunds for completed payments
 
@@ -69,7 +69,7 @@ def _get_pending_withdrawals(db: Session, merchant_id, token: str) -> Decimal:
 def _get_settlement_status(db: Session, merchant: Merchant, token: str) -> str:
     """
     Determine where the merchant's funds currently are:
-    - in_platform: All funds still in ChainPe platform balance
+    - in_platform: All funds still in Dari platform balance
     - settled_external: Funds have been withdrawn to external wallet/bank
     - partially_settled: Some funds withdrawn, some still in platform
     """

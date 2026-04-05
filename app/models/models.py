@@ -1217,6 +1217,7 @@ class Web3Subscription(Base):
     customer_email = Column(String(255), nullable=True)
     customer_name = Column(String(255), nullable=True)
     failed_payment_count = Column(Integer, nullable=False, default=0)
+    first_failed_at = Column(DateTime, nullable=True)  # Track when first payment failure occurred
     max_retries = Column(Integer, nullable=False, default=0)
     retry_interval_hours = Column(Integer, nullable=False, default=24)
     grace_period_days = Column(Integer, nullable=True, default=3)  # Days to stay alive after payment failure before auto-pause

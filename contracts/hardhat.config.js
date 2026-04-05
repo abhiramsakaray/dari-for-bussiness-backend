@@ -53,8 +53,23 @@ module.exports = {
             accounts: [DEPLOYER_PRIVATE_KEY],
         },
         arbitrum: {
-            url: "https://arb1.arbitrum.io/rpc",
+            url: process.env.ARBITRUM_MAINNET_RPC_URL || "https://arb1.arbitrum.io/rpc",
             chainId: 42161,
+            accounts: [DEPLOYER_PRIVATE_KEY],
+        },
+        bsc: {
+            url: process.env.BSC_MAINNET_RPC_URL || "https://bsc-dataseed.bnbchain.org",
+            chainId: 56,
+            accounts: [DEPLOYER_PRIVATE_KEY],
+        },
+        bscTestnet: {
+            url: process.env.BSC_TESTNET_RPC_URL || "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+            chainId: 97,
+            accounts: [DEPLOYER_PRIVATE_KEY],
+        },
+        arbitrumSepolia: {
+            url: process.env.ARBITRUM_TESTNET_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc",
+            chainId: 421614,
             accounts: [DEPLOYER_PRIVATE_KEY],
         },
     },
@@ -64,6 +79,8 @@ module.exports = {
             polygon: process.env.POLYGONSCAN_API_KEY || "",
             base: process.env.BASESCAN_API_KEY || "",
             arbitrumOne: process.env.ARBISCAN_API_KEY || "",
+            bsc: process.env.BSCSCAN_API_KEY || "",
+            bscTestnet: process.env.BSCSCAN_API_KEY || "",
             sepolia: process.env.ETHERSCAN_API_KEY || "",
             polygonAmoy: process.env.POLYGONSCAN_API_KEY || "",
             baseSepolia: process.env.BASESCAN_API_KEY || "",

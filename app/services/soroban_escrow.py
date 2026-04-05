@@ -1,4 +1,4 @@
-"""
+﻿"""
 Soroban Escrow Service - Smart Contract Integration
 Handles escrow payments using Soroban smart contracts on Stellar
 """
@@ -227,7 +227,7 @@ class SorobanEscrowService:
         Admin force refund (customer protection).
         
         Args:
-            admin_secret: ChainPe admin's Stellar secret key
+            admin_secret: Dari admin's Stellar secret key
             session_id: Payment session ID
         
         Returns:

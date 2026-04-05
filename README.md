@@ -193,7 +193,7 @@ curl -X POST http://localhost:8000/auth/register \
   -d '{"email":"test@example.com","password":"test123","business_name":"Test Store"}'
 ```
 
-See [TESTING.md](TESTING.md) for comprehensive testing guide.
+See [TESTING.md](docs/guides/TESTING.md) for comprehensive testing guide.
 
 ## Security
 

@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChainPe Button Demo</title>
-    <script src="https://chainpe.onrender.com/chainpe-button.js"></script>
+    <title>Dari Button Demo</title>
+    <script src="https://Dari.onrender.com/Dari-button.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -161,7 +161,7 @@
 <body>
     <div class="container">
         <h1>🛍️ Demo Store</h1>
-        <p class="subtitle">ChainPe Payment Integration Example</p>
+        <p class="subtitle">Dari Payment Integration Example</p>
         
         <div class="product">
             <div class="product-image">🎮</div>
@@ -175,8 +175,8 @@
         <div class="payment-methods">
             <h3>Choose Payment Method:</h3>
             
-            <!-- ChainPe Button (will be styled by SDK) -->
-            <button id="chainpe-payment-button"></button>
+            <!-- Dari Button (will be styled by SDK) -->
+            <button id="Dari-payment-button"></button>
             
             <!-- Traditional payment options -->
             <button class="traditional-button" onclick="alert('Card payment not configured')">
@@ -185,7 +185,7 @@
         </div>
         
         <div class="info-box">
-            <h4>💡 About ChainPe Payments</h4>
+            <h4>💡 About Dari Payments</h4>
             <ul>
                 <li>✅ Pay with USDC or XLM (Stellar network)</li>
                 <li>✅ Scan QR code with Freighter, Lobstr, or Solar wallet</li>
@@ -197,15 +197,15 @@
 
         <div class="subscription-box">
             <h4>🔁 Hosted Subscription Page</h4>
-            <p style="color:#475569;margin-top:6px;">Use the same hosted ChainPe page for plan selection and customer approval.</p>
+            <p style="color:#475569;margin-top:6px;">Use the same hosted Dari page for plan selection and customer approval.</p>
             <input type="text" id="planId" placeholder="Enter plan ID (e.g. plan_xxxxx)">
             <button onclick="goToHostedSubscription()">Open Subscription Page</button>
         </div>
     </div>
     
     <script>
-        // Initialize ChainPe button
-        ChainPe.init({
+        // Initialize Dari button
+        Dari.init({
             apiKey: 'pk_test_demo123456789',  // Replace with your actual API key
             amount: 50.00,
             orderId: 'DEMO-' + Date.now(),
@@ -219,7 +219,7 @@
             }
         });
         
-        console.log('ChainPe button initialized! 🎉');
+        console.log('Dari button initialized! 🎉');
 
         function goToHostedSubscription() {
             const planId = document.getElementById('planId').value.trim();

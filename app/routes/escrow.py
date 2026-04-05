@@ -1,4 +1,4 @@
-"""
+﻿"""
 Escrow API Routes - Soroban Smart Contract Integration
 Endpoints for creating and managing escrow payments
 """
@@ -147,7 +147,7 @@ async def admin_force_refund(
     admin: Admin = Depends(require_admin)
 ):
     """
-    ChainPe admin can force refund for customer protection.
+    Dari admin can force refund for customer protection.
     
     Use cases:
     - Merchant dispute

@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChainPe Integration Demo</title>
+    <title>Dari Integration Demo</title>
     <style>
         * {
             margin: 0;
@@ -210,7 +210,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>ChainPe Integration Demo</h1>
+        <h1>Dari Integration Demo</h1>
         <p class="subtitle">Test e-commerce platform integrations</p>
         
         <!-- Configuration Section -->
@@ -218,17 +218,17 @@
             <h2>Configuration</h2>
             <div class="form-group">
                 <label for="apiKey">API Key</label>
-                <input type="text" id="apiKey" placeholder="Enter your ChainPe API key" value="">
+                <input type="text" id="apiKey" placeholder="Enter your Dari API key" value="">
             </div>
             <div class="form-group">
                 <label for="baseUrl">Base URL</label>
-                <input type="text" id="baseUrl" value="https://chainpe.onrender.com" placeholder="https://chainpe.onrender.com">
+                <input type="text" id="baseUrl" value="https://Dari.onrender.com" placeholder="https://Dari.onrender.com">
             </div>
         </div>
 
         <div class="demo-section">
             <h2>Hosted Subscription Link</h2>
-            <p style="margin-bottom:14px;color:#444;">Create a shareable plan URL to redirect users from your website to ChainPe hosted subscription approval.</p>
+            <p style="margin-bottom:14px;color:#444;">Create a shareable plan URL to redirect users from your website to Dari hosted subscription approval.</p>
             <div class="inline-row">
                 <div class="form-group">
                     <label for="subscriptionPlanId">Plan ID</label>
@@ -387,11 +387,11 @@
             document.getElementById('codeContent').innerHTML = `
                 <p>Add this to your Shopify theme:</p>
                 <div class="code-block">
-&lt;button onclick="payWithChainPe()"&gt;Pay with Crypto&lt;/button&gt;
+&lt;button onclick="payWithDari()"&gt;Pay with Crypto&lt;/button&gt;
 
 &lt;script&gt;
-function payWithChainPe() {
-    fetch('https://chainpe.onrender.com/integrations/create-checkout', {
+function payWithDari() {
+    fetch('https://Dari.onrender.com/integrations/create-checkout', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -418,7 +418,7 @@ function payWithChainPe() {
             document.getElementById('codeContent').innerHTML = `
                 <p>Add this to your WooCommerce payment gateway:</p>
                 <div class="code-block">
-$response = wp_remote_post('https://chainpe.onrender.com/integrations/create-checkout', array(
+$response = wp_remote_post('https://Dari.onrender.com/integrations/create-checkout', array(
     'body' => json_encode(array(
         'api_key' => $this->api_key,
         'amount' => $order->get_total(),
@@ -444,7 +444,7 @@ wp_redirect($data->checkout_url);
                 <p>Use this for any website:</p>
                 <div class="code-block">
 async function createCheckout(amount, orderId) {
-    const response = await fetch('https://chainpe.onrender.com/integrations/create-checkout', {
+    const response = await fetch('https://Dari.onrender.com/integrations/create-checkout', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -478,7 +478,7 @@ document.getElementById('payButton').onclick = () => {
 import requests
 
 def create_checkout(amount, order_id):
-    response = requests.post('https://chainpe.onrender.com/integrations/create-checkout', json={
+    response = requests.post('https://Dari.onrender.com/integrations/create-checkout', json={
         'api_key': 'YOUR_API_KEY',
         'amount': amount,
         'currency': 'USD',

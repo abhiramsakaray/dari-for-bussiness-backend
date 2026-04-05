@@ -231,12 +231,15 @@ async def startup_event():
     logger.info("   • Ethereum (USDC, USDT, PYUSD)")
     logger.info("   • Polygon (USDC, USDT)")
     logger.info("   • Base (USDC)")
+    logger.info("   • BSC (USDC, USDT)")
+    logger.info("   • Arbitrum (USDC, USDT)")
     logger.info("   • Tron (USDT, USDC)")
+    logger.info("   • Solana (USDC)")
     logger.info("=" * 60)
     logger.info("")
     logger.info("⚠️  IMPORTANT: Start blockchain listeners separately:")
-    logger.info("   python run_listeners.py                # All enabled chains")
-    logger.info("   python run_listeners.py polygon tron   # Specific chains only")
+    logger.info("   python run_listeners.py                     # All enabled chains")
+    logger.info("   python run_listeners.py polygon tron bsc    # Specific chains only")
     logger.info("")
     
     # Start Web3 subscription scheduler if enabled

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Subscription Checkout Routes
 
 Public-facing routes for customers to subscribe to merchant plans.
@@ -267,7 +267,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
 
     {('<ul class="features-list">' + "".join(f"<li>{f}</li>" for f in plan.features) + '</ul>') if plan.features else ''}
 
-    <div class="secured">Secured by <b>ChainPe</b></div>
+    <div class="secured">Secured by <b>Dari</b></div>
   </div>
 
   <!-- ═ RIGHT ═ -->
@@ -772,7 +772,7 @@ async def subscription_authorize_page(
       <div class=\"price-crypto\">≈ <span id=\"cryptoValue\">-- USDC</span> on <span id=\"chainValue\">Polygon</span></div>
     </div>
     <div class=\"status-pill\"><span class=\"dot\"></span><span id=\"statusText\">Waiting for wallet signature...</span></div>
-    <div class=\"secured\">Secured by <b>ChainPe</b></div>
+    <div class=\"secured\">Secured by <b>Dari</b></div>
   </div>
 
   <div class=\"right\">
@@ -1437,7 +1437,7 @@ async def manage_subscription_page(
 
             <div class=\"left-footer\">
                 <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path></svg>
-                Secured by ChainPe
+                Secured by Dari
             </div>
         </div>
 

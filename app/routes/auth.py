@@ -68,9 +68,19 @@ async def login_merchant(
     db: Session = Depends(get_db)
 ):
     """Login as a merchant or admin."""
+    from app.core.security_utils import (
+        check_account_lockout,
+        record_failed_login,
+        clear_login_attempts,
+    )
+
+    # Brute-force protection
+    check_account_lockout(credentials.email)
+
     # First check if it's an admin
     admin = db.query(Admin).filter(Admin.email == credentials.email).first()
     if admin and verify_password(credentials.password, admin.password_hash):
+        clear_login_attempts(credentials.email)
         # Generate admin JWT token
         access_token = create_access_token(
             data={"sub": str(admin.id), "role": "admin"}
@@ -84,6 +94,7 @@ async def login_merchant(
     merchant = db.query(Merchant).filter(Merchant.email == credentials.email).first()
     
     if not merchant or not verify_password(credentials.password, merchant.password_hash):
+        record_failed_login(credentials.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -95,6 +106,9 @@ async def login_merchant(
             detail="Account is disabled"
         )
     
+    # Successful login — clear lockout counter
+    clear_login_attempts(credentials.email)
+
     # Generate API key if merchant doesn't have one (backward compatibility)
     if not merchant.api_key:
         merchant.api_key = generate_api_key()

@@ -181,8 +181,8 @@ def create_registry_with_listeners(config: Dict[str, Any] = None) -> BlockchainR
         except Exception as e:
             logger.error(f"Failed to create Stellar listener: {e}")
 
-    # EVM chains (Ethereum, Polygon, Base)
-    for chain in ["ethereum", "polygon", "base"]:
+    # EVM chains (Ethereum, Polygon, Base, BSC, Arbitrum)
+    for chain in ["ethereum", "polygon", "base", "bsc", "arbitrum"]:
         chain_upper = chain.upper()
         enabled = config.get(chain, {}).get("enabled", getattr(settings, f"{chain_upper}_ENABLED", False))
         if enabled:
