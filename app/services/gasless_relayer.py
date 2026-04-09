@@ -264,7 +264,27 @@ class GaslessRelayer:
             gas_estimate = tx_func.estimate_gas({"from": self._account.address})
             gas_limit = int(gas_estimate * 1.3)  # 30% safety buffer
         except Exception as e:
-            logger.error(f"[{chain}] Gas estimation failed for {function_name}: {e}")
+            # Extract detailed error info
+            error_msg = str(e)
+            error_type = type(e).__name__
+            
+            # Log detailed error for debugging (don't raise yet, provide context)
+            logger.error(
+                f"[{chain}] ❌ Gas estimation failed for {function_name}:\n"
+                f"  Error Type: {error_type}\n"
+                f"  Error Message: {error_msg}\n"
+                f"  Relayer Address: {self._account.address}\n"
+                f"  Subscription ID: {subscription_id if subscription_id else 'N/A'}"
+            )
+            
+            # If it's a contract revert, try to provide more context
+            if "revert" in error_msg.lower() or "0x" in error_msg:
+                logger.warning(
+                    f"[{chain}] ⚠️  Contract revert during gas estimation. "
+                    f"Possible causes: subscription not found, relayer not approved, "
+                    f"subscription not due yet, or already executed."
+                )
+            
             raise
 
         # Build transaction

@@ -313,6 +313,7 @@ class SubscriptionScheduler:
     ):
         """Handle a failed payment with grace period + retry logic"""
         payment.status = PaymentStatus.FAILED
+        payment.error_message = error[:500]  # Store error details for debugging
         sub.failed_payment_count += 1
 
         # Track first failure timestamp
