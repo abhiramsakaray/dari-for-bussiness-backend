@@ -18,4 +18,11 @@ echo.
 echo ================================================================================
 echo.
 
+REM Set Python path to current directory
+set PYTHONPATH=.
+
+REM Change to project root
+cd /d "%~dp0\.."
+
+REM Start the API with scheduler
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
