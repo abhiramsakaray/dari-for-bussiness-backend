@@ -319,7 +319,8 @@ class PaymentSession(Base):
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    expires_at = Column(DateTime, nullable=True)
+    payment_started_at = Column(DateTime, nullable=True)  # When user starts payment (opens checkout page or initiates payment)
+    expires_at = Column(DateTime, nullable=True)  # Calculated as payment_started_at + 15 minutes
     paid_at = Column(DateTime, nullable=True)
     
     # Metadata

@@ -109,7 +109,14 @@ async def get_payment_session_status(
         )
     
     # Check if session has expired
-    expiry_time = session.created_at + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
+    # Use payment_started_at if available, otherwise fall back to created_at
+    payment_timeout_minutes = settings.PAYMENT_EXPIRY_MINUTES if hasattr(settings, 'PAYMENT_EXPIRY_MINUTES') else 15
+    
+    if session.payment_started_at:
+        expiry_time = session.payment_started_at + timedelta(minutes=payment_timeout_minutes)
+    else:
+        expiry_time = session.created_at + timedelta(minutes=payment_timeout_minutes)
+    
     if session.status == PaymentStatus.CREATED and datetime.utcnow() > expiry_time:
         session.status = PaymentStatus.EXPIRED
         db.commit()

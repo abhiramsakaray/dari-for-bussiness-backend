@@ -75,12 +75,14 @@ async def checkout_page(
         </body></html>
         """)
     
-    # Determine expiry using the session's own expires_at (set at creation)
-    # If expires_at is missing, compute from created_at
-    if session.expires_at:
-        expiry_time = session.expires_at
-    else:
-        expiry_time = session.created_at + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
+    # Set payment_started_at on first page load
+    if not session.payment_started_at:
+        session.payment_started_at = datetime.utcnow()
+        db.commit()
+    
+    # Calculate expiration: payment_started_at + 15 minutes
+    payment_timeout_minutes = settings.PAYMENT_EXPIRY_MINUTES if hasattr(settings, 'PAYMENT_EXPIRY_MINUTES') else 15
+    expiry_time = session.payment_started_at + timedelta(minutes=payment_timeout_minutes)
     
     is_expired = datetime.utcnow() > expiry_time
     
@@ -328,16 +330,23 @@ async def checkout_page(
         logger.error(f"Error generating payment URI: {e}")
         qr_data = payment_address  # Fallback on error
 
-    # ── Dari App QR — always generate using Polygon USDC with merchant name ──
+    # ── Dari App Deep Link — use dari: protocol ──
     try:
-        polygon_usdc_contract = settings.POLYGON_USDC_ADDRESS
-        polygon_chain_id = settings.POLYGON_CHAIN_ID
-        dari_amount_wei = int(Decimal(str(amount_token_val)) * (10 ** 6))
-        merchant_name_safe = (session.merchant.name or 'Merchant').replace(' ', '%20')
-        dari_qr_data = f"ethereum:{polygon_usdc_contract}@{polygon_chain_id}/transfer?address={payment_address}&uint256={dari_amount_wei}&merchant={merchant_name_safe}"
-        logger.info(f"Generated Dari App QR: {dari_qr_data}")
+        dari_deep_link = None
+        if session.merchant:
+            merchant_name_safe = (session.merchant.name or 'Merchant').replace(' ', '%20')
+            session_id_safe = session_id.replace('_', '-')  # URL-safe encoding
+            
+            # Format: dari://pay/sessionId?chain=polygon&amount=X&merchant=NAME&token=USDC
+            dari_deep_link = f"dari://pay/{session_id_safe}?chain={current_chain}&amount={amount_token_val}&merchant={merchant_name_safe}&token={current_token}"
+            
+            # Also create a full QR code with the deep link
+            dari_qr_data = dari_deep_link
+            logger.info(f"Generated Dari App deep link: {dari_deep_link}")
     except Exception as e:
-        logger.error(f"Error generating Dari App URI: {e}")
+        logger.error(f"Error generating Dari App deep link: {e}")
+        dari_qr_data = None
+        dari_deep_link = None
 
     # ── QR code image (standard) ──
     qr = qrcode.QRCode(version=1, box_size=8, border=4)
@@ -393,7 +402,8 @@ async def checkout_page(
         "payer_data_submitted": payer_exists,
         "merchant_id": str(session.merchant_id),
         "dari_qr_b64": dari_qr_b64,
-        "show_dari": dari_qr_b64 is not None,
+        "dari_deep_link": dari_deep_link,
+        "show_dari": dari_qr_b64 is not None or dari_deep_link is not None,
     })
 
 

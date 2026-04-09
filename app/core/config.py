@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     API_KEY_SECRET: str = "your-api-key-secret-change-in-production"
     
     # Payment Settings
-    PAYMENT_EXPIRY_MINUTES: int = 30
+    PAYMENT_EXPIRY_MINUTES: int = 15  # Payment timeout from when user starts (opens checkout page)
     WEBHOOK_RETRY_LIMIT: int = 3
     WEBHOOK_TIMEOUT_SECONDS: int = 10
     
