@@ -209,7 +209,7 @@
             apiKey: 'pk_test_demo123456789',  // Replace with your actual API key
             amount: 50.00,
             orderId: 'DEMO-' + Date.now(),
-            successUrl: window.location.origin + '/demo-success.html',
+            successUrl: window.location.href + '?payment=success',
             cancelUrl: window.location.href,
             metadata: {
                 customerEmail: 'demo@example.com',
@@ -230,6 +230,14 @@
 
             const redirect = encodeURIComponent(window.location.href);
             window.location.href = `/subscribe/${planId}?source=demo_html&return_url=${redirect}`;
+        }
+
+        // Handle success redirect
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('payment') === 'success') {
+            alert('Payment completed successfully!');
+            // Clean up the URL
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
     </script>
 </body>

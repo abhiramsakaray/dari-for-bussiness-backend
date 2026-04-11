@@ -350,7 +350,16 @@ class EVMListener(BlockchainListener):
         logger.info(f"🚀 Starting {self.config.chain} listener on {self.config.rpc_url}")
 
         # Load merchant wallets before polling
-        await self._refresh_watched_addresses()
+        try:
+            await asyncio.wait_for(self._refresh_watched_addresses(), timeout=10)
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout loading merchant wallets for {self.config.chain}")
+            self.is_running = False
+            return
+        except Exception as e:
+            logger.error(f"Error loading merchant wallets: {e}")
+            self.is_running = False
+            return
         
         # Get starting block
         try:
@@ -439,13 +448,17 @@ class EVMListener(BlockchainListener):
             ]
             
             if not token_addresses:
+                logger.debug(f"No token addresses configured for {self.config.chain}")
                 return
 
             if not self._watched_addresses:
+                logger.debug(f"No watched addresses for {self.config.chain}")
                 return
 
             # Encode watched destination addresses for indexed `to` topic filtering
             to_topics = ["0x" + address[2:].rjust(64, "0") for address in self._watched_addresses]
+            
+            logger.debug(f"Scanning {self.config.chain} blocks {from_block}-{to_block} for transfers to {len(self._watched_addresses)} wallets")
                 
             # Build filter for Transfer events
             filter_params = {
@@ -459,11 +472,14 @@ class EVMListener(BlockchainListener):
             # Get logs
             logs = self.w3.eth.get_logs(filter_params)
             
+            if logs:
+                logger.info(f"Found {len(logs)} matching transfer(s) in blocks {from_block}-{to_block}")
+            
             for log in logs:
                 await self._process_transfer_log(log, to_block)
                 
         except Exception as e:
-            logger.error(f"Error scanning blocks {from_block}-{to_block}: {e}")
+            logger.error(f"Error scanning blocks {from_block}-{to_block}: {e}", exc_info=True)
             raise
             
     async def _process_transfer_log(self, log: Dict[str, Any], current_block: int):
@@ -475,20 +491,35 @@ class EVMListener(BlockchainListener):
             # Check if this is a token we're tracking
             token = self.get_token_by_address(token_address)
             if not token:
+                logger.debug(f"Unknown token address in log: {token_address}")
                 return
                 
             # Decode topics
             topics = log.get("topics", [])
             if len(topics) < 3:
+                logger.debug(f"Log missing required topics: {len(topics)}")
                 return
+            
+            # Handle both bytes and hex string topics
+            def get_topic_addr(topic) -> str:
+                """Extract address from topic, handling both bytes and str"""
+                if isinstance(topic, bytes):
+                    return "0x" + topic.hex()[-40:]
+                elif isinstance(topic, str):
+                    return "0x" + topic[-40:]
+                else:
+                    return "0x" + str(topic)[-40:]
                 
             # Extract from and to addresses (remove padding)
-            from_address = "0x" + topics[1].hex()[-40:]
-            to_address = "0x" + topics[2].hex()[-40:]
+            from_address = get_topic_addr(topics[1])
+            to_address = get_topic_addr(topics[2])
+            
+            logger.debug(f"Transfer log: {from_address[:10]}...  -> {to_address[:10]}... token={token.symbol}")
             
             # Check if to_address is one we're watching
             # If no addresses are being watched, process all transfers
             if self._watched_addresses and to_address.lower() not in self._watched_addresses:
+                logger.debug(f"To address {to_address} not in watched addresses")
                 return
                 
             # Decode amount from data
@@ -542,7 +573,9 @@ class EVMListener(BlockchainListener):
                 logger.info(f"Waiting for confirmations: {confirmations}/{self.config.confirmations_required}")
                 
         except Exception as e:
-            logger.error(f"Error processing transfer log: {e}")
+            logger.error(f"Error processing transfer log: {e}", exc_info=True)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             
     async def get_current_block(self) -> int:
         """Get current block number"""

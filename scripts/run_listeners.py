@@ -19,6 +19,10 @@ Usage:
 import asyncio
 import logging
 import sys
+import os
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,15 +86,29 @@ async def run(chains=None):
         return
 
     logger.info(f"Starting {len(listeners)} listener(s)...")
-    tasks = [asyncio.create_task(l.start()) for l in listeners]
-
+    
+    # Start each listener
+    tasks = []
+    for i, listener in enumerate(listeners):
+        logger.info(f"[{i+1}/{len(listeners)}] Starting {listener.config.chain}...")
+        task = asyncio.create_task(listener.start())
+        tasks.append((listener, task))
+    
     try:
-        await asyncio.gather(*tasks)
+        # Run all listeners concurrently
+        await asyncio.gather(*[task for _, task in tasks])
     except asyncio.CancelledError:
         pass
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, stopping listeners...")
     finally:
-        for l in listeners:
-            await l.stop()
+        for listener, task in tasks:
+            try:
+                if not task.done():
+                    task.cancel()
+                await listener.stop()
+            except Exception as e:
+                logger.error(f"Error stopping {listener.config.chain} listener: {e}")
 
 
 if __name__ == "__main__":

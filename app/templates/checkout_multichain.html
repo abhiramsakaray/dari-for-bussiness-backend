@@ -457,9 +457,8 @@
 
             {% elif status == 'paid' %}
             <!-- Success State -->
-            <div class="success-check">✓</div>
             <div class="status success">
-                ✅ Payment Successful!
+                Payment Successful!
             </div>
             <div class="detail-row">
                 <span class="detail-label">Transaction</span>
@@ -615,7 +614,7 @@
 
                     if (status.status === 'paid') {
                         clearInterval(pollInterval);
-                        window.location.href = successUrl + '?session_id=' + sessionId;
+                        window.location.href = successUrl + (successUrl.includes('?') ? '&' : '?') + 'session_id=' + sessionId;
                     } else if (status.status === 'expired') {
                         clearInterval(pollInterval);
                         window.location.reload();
@@ -715,7 +714,7 @@
                         }).then(r=>r.json()).then(res=>{
                             if(res.status==='paid'||res.status==='already_paid'){
                                 if(pollInterval)clearInterval(pollInterval);
-                                document.querySelector('.payment-status').innerHTML='<div style="text-align:center;color:#16a34a;font-weight:700;font-size:18px">✅ Payment Complete — 100% Coupon!</div>';
+                                document.querySelector('.payment-status').innerHTML='<div style="text-align:center;color:#16a34a;font-weight:700;font-size:18px">Payment Complete — 100% Coupon!</div>';
                                 setTimeout(()=>location.href=successUrl,2000);
                             }else{
                                 msg.style.color='#e74c3c';msg.textContent=res.detail||res.message||'Error completing payment';

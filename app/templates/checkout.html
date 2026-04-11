@@ -108,9 +108,9 @@
         .ch-logo.tron{background:#fef2f2}
 
         /* Dari App sidebar item */
-        .dari-side-item{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer;border-left:3px solid transparent;transition:all .15s;background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);border-bottom:1px solid #e5e7eb;position:relative}
-        .dari-side-item:hover{background:linear-gradient(135deg,#dbeafe 0%,#bfdbfe 100%)}
-        .dari-side-item.active{border-left-color:#2563eb;background:linear-gradient(135deg,#dbeafe 0%,#bfdbfe 100%)}
+        .dari-side-item{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer;border-left:3px solid transparent;transition:all .15s;background:#fff;border-bottom:1px solid #e5e7eb;position:relative}
+        .dari-side-item:hover{background:#f9fafb}
+        .dari-side-item.active{border-left-color:#2563eb;background:#eff6ff}
         .dari-side-logo{width:34px;height:34px;border-radius:9px;overflow:hidden;flex-shrink:0;border:1.5px solid #93c5fd}
         .dari-side-logo img{width:100%;height:100%;object-fit:cover}
         .dari-side-info{flex:1;min-width:0}
@@ -184,8 +184,8 @@
         .rec-arr{color:#9ca3af;font-size:20px;font-weight:300}
 
         /* Dari App Featured */
-        .dari-featured{background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);border:2px solid #93c5fd;border-radius:16px;padding:20px;position:relative;overflow:hidden}
-        .dari-featured::before{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:rgba(37,99,235,.06);border-radius:50%}
+        .dari-featured{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;position:relative;overflow:hidden}
+        .dari-featured::before{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:rgba(37,99,235,.03);border-radius:50%}
         .dari-badge{display:inline-flex;align-items:center;gap:5px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:3px 10px;border-radius:20px;margin-bottom:12px}
         .dari-badge svg{width:12px;height:12px}
         .dari-header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
@@ -238,14 +238,6 @@
 </head>
 <body>
 <div class="modal" id="checkoutModal">
-    <!-- ══ SUCCESS OVERLAY (hidden by default) ══ -->
-    <div class="success-overlay" id="successOverlay" style="display:none">
-        <div class="success-check">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
-        <div class="success-title">Payment Successful</div>
-        <div class="success-sub">Please wait, you will be redirected</div>
-    </div>
 
     <!-- ══ LEFT ══ -->
     <div class="left">
@@ -296,6 +288,20 @@
 
     <!-- ══ RIGHT ══ -->
     <div class="right" style="position:relative">
+        <!-- ── DARI PAYMENT REQUEST OVERLAY ── -->
+        <div class="payer-overlay" id="dariRequestOverlay" style="display:none; z-index: 85; justify-content: center; align-items: center; text-align: center; padding: 40px;">
+            <div class="pending-spinner" style="margin-bottom: 24px;"></div>
+            <h2 style="font-size: 24px; font-weight: 800; color: #1e293b; margin-bottom: 12px;">Request Sent!</h2>
+            <p style="font-size: 15px; color: #64748b; font-weight: 500; margin-bottom: 30px; line-height: 1.5;">Waiting for payment confirmation from Dari app...</p>
+            
+            <div class="timer-box" style="margin-bottom: 24px; justify-content: center; width: 100%; max-width: 250px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <div class="timer-txt">Expires in <span class="timer-val" id="rqTimer">--:--</span></div>
+            </div>
+
+            <button onclick="cancelDariPayment()" class="pf-btn" style="background: transparent; color: #64748b; border: 2px solid #e2e8f0; margin-top: 10px; max-width: 200px;">Cancel Request</button>
+        </div>
+
         {% if collect_payer_data and not payer_data_submitted %}
         <!-- ── PAYER DATA COLLECTION OVERLAY ── -->
         <div class="payer-overlay" id="payerOverlay">
@@ -472,7 +478,13 @@
                                 <div class="dari-scan">Scan with Dari</div>
                             </div>
                         </div>
-                        <div class="dari-info">Send <b>{{ currency_symbol }}{{ amount_fiat }}</b></div>
+                        <div class="dari-info" style="margin-bottom: 20px;">Send <b>{{ currency_symbol }}{{ amount_fiat }}</b></div>
+                        
+                        <!-- Request Payment Input -->
+                        <div style="margin-top: 10px; display: flex; flex-direction: row; gap: 8px; position: relative; z-index: 2; align-items: center;">
+                            <input type="text" id="dariPaymentTarget" placeholder="Address (e.g. abhi@dari)" style="flex: 1; padding: 12px 16px; border: 1.5px solid #d1d5db; border-radius: 10px; font-size: 14px; font-family: inherit; outline: none; transition: border 0.15s; background: #f9fafb;">
+                            <button class="pf-btn" onclick="sendDariRequest()" style="background: linear-gradient(135deg, #2563eb, #1d4ed8); width: auto; padding: 12px 20px; box-shadow: 0 4px 12px rgba(37,99,235,0.2); flex-shrink: 0; margin-top: 0;">Request</button>
+                        </div>
                     </div>
 
                     <!-- Details for Dari -->
@@ -728,6 +740,25 @@ function submitPayerData(){
     });
 }
 
+function sendDariRequest() {
+    const addr = document.getElementById('dariPaymentTarget').value.trim();
+    if(!addr) {
+        alert('Please enter a Dari address');
+        document.getElementById('dariPaymentTarget').focus();
+        return;
+    }
+    // Show overlay to hide right panel content
+    const overlay = document.getElementById('dariRequestOverlay');
+    if(overlay) overlay.style.display = 'flex';
+    document.getElementById('statusLabel').textContent = 'Waiting for Dari confirmation...';
+}
+
+function cancelDariPayment() {
+    const overlay = document.getElementById('dariRequestOverlay');
+    if(overlay) overlay.style.display = 'none';
+    document.getElementById('statusLabel').textContent = 'Waiting for payment...';
+}
+
 /* Auto-fill & auto-submit from saved data */
 (function(){
     const overlay=document.getElementById('payerOverlay');
@@ -751,6 +782,8 @@ function tick(){
     if(d<=0){
         document.getElementById('timer').textContent='Expired';
         document.getElementById('qrTimer').textContent='Expired';
+        const rqTimer = document.getElementById('rqTimer');
+        if (rqTimer) rqTimer.textContent = 'Expired';
         setStatus('expired','Session expired');
         clearInterval(poll);
         return;
@@ -759,6 +792,8 @@ function tick(){
     const t=m+':'+String(s).padStart(2,'0');
     document.getElementById('timer').textContent=t;
     document.getElementById('qrTimer').textContent=t;
+    const rqTimer = document.getElementById('rqTimer');
+    if (rqTimer) rqTimer.textContent = t;
 }
 
 function setStatus(type,text){
@@ -767,11 +802,10 @@ function setStatus(type,text){
 }
 
 function showPaymentSuccess(){
-    setStatus('paid','Payment Successful!');
+    setStatus('paid', 'Payment Successful');
     clearInterval(poll);
-    const overlay=document.getElementById('successOverlay');
-    if(overlay)overlay.style.display='flex';
-    setTimeout(()=>location.href=SUCCESS,3000);
+    console.log('Payment confirmed! Redirecting to success page...');
+    if(SUCCESS) location.href=SUCCESS;
 }
 
 function showPaymentPending(data){
@@ -788,8 +822,9 @@ function checkPay(){
     fetch(API_BASE+'/public/session/'+SESSION+'/verify')
         .then(r=>r.json())
         .then(d=>{
-            if(d.status==='paid'){showPaymentSuccess()}
-            else if(d.status==='pending'){showPaymentPending(d)}
+            const status = (d.status || '').toUpperCase();
+            if(status==='PAID'){showPaymentSuccess()}
+            else if(status==='PENDING'){showPaymentPending(d)}
         }).catch(()=>{});
 }
 
@@ -802,20 +837,36 @@ function cp(txt,btn){
     });
 }
 
-function selectChain(c){
-    // Show chain panel, hide dari panel
-    const dp=document.getElementById('dariPanel');
-    const cp=document.getElementById('chainPanel');
-    const di=document.getElementById('dariSideItem');
-    if(dp)dp.style.display='none';
-    if(cp)cp.style.display='block';
-    if(di)di.classList.remove('active');
-    // Remove active from all chain items then set
-    document.querySelectorAll('.ch-item').forEach(el=>el.classList.remove('active'));
-    const ci=document.getElementById('chain-'+c);
-    if(ci)ci.classList.add('active');
-    const u=new URL(location.href);u.searchParams.set('chain',c);location.href=u.toString();
+function updateCheckout(url) {
+    const origStatus = document.getElementById('statusLabel').textContent;
+    document.getElementById('statusLabel').textContent = 'Loading...';
+    
+    fetch(url)
+        .then(r => r.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newModal = doc.getElementById('checkoutModal');
+            if (newModal) {
+                document.getElementById('checkoutModal').innerHTML = newModal.innerHTML;
+                
+                // Rebind event listeners
+                const inp=document.getElementById('couponInput');
+                if(inp)inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();applyCoupon();}});
+            }
+            history.pushState(null, '', url);
+        })
+        .catch(err => {
+            document.getElementById('statusLabel').textContent = origStatus;
+            console.error('Failed to update checkout:', err);
+        });
 }
+
+function selectChain(c){
+    const u=new URL(location.href);u.searchParams.set('chain',c);
+    updateCheckout(u.toString());
+}
+
 function selectDari(){
     // Show dari panel, hide chain panel
     const dp=document.getElementById('dariPanel');
@@ -827,12 +878,16 @@ function selectDari(){
     // Remove active from all chain items
     document.querySelectorAll('.ch-item').forEach(el=>el.classList.remove('active'));
 }
-function selectToken(t){const u=new URL(location.href);u.searchParams.set('token',t);location.href=u.toString()}
+
+function selectToken(t){
+    const u=new URL(location.href);u.searchParams.set('token',t);
+    updateCheckout(u.toString());
+}
 function cancelPayment(){if(confirm('Cancel this payment?')){clearInterval(poll);location.href=CANCEL}}
 function showHelp(){alert('How to pay:\n\n1. Choose a blockchain on the left or use Dari\n2. Pick your token (USDC, USDT, etc.)\n3. Scan the QR code or copy the address\n4. Send the exact amount shown\n\nPayment is confirmed automatically.')}
 
 tick();setInterval(tick,1000);
-checkPay();poll=setInterval(checkPay,3000);
+checkPay();poll=setInterval(checkPay,2500);
 
 /* ── Coupon / Promo Code ── */
 let appliedCoupon=null;

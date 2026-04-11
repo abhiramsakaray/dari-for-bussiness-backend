@@ -92,19 +92,6 @@ async def checkout_page(
         session.status = PaymentStatus.EXPIRED
         db.commit()
     
-    # If session is expired, show the expired state (do NOT reset/extend)
-    if is_expired and session.status == PaymentStatus.EXPIRED:
-        return HTMLResponse(content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head><title>Session Expired</title></head>
-        <body style="font-family:Inter,Arial;text-align:center;padding:50px;background:#0a0e27;color:#fff">
-            <h1>⏰ Payment Session Expired</h1>
-            <p>This payment session has expired. Please request a new payment link from the merchant.</p>
-            <a href="{session.cancel_url or '/'}" style="color:#7c3aed;text-decoration:underline">Return to merchant</a>
-        </body></html>
-        """)
-    
     # ── Parse available chains / tokens (handle JSONB strings) ──
     def _parse_json_field(val, default):
         if val:
@@ -119,12 +106,14 @@ async def checkout_page(
         return default
 
     # Always show all supported chains regardless of DB value
-    available_chains = ['stellar', 'ethereum', 'polygon', 'base', 'tron']
+    available_chains = ['stellar', 'ethereum', 'polygon', 'base', 'tron', 'avalanche']
 
     available_tokens = _parse_json_field(
         session.accepted_tokens,
-        ['USDC', 'USDT', 'PYUSD']
+        ['USDC', 'USDT']
     )
+    # Ensure PYUSD is removed even if dynamically provided previously
+    available_tokens = [t for t in available_tokens if t.upper() != 'PYUSD']
 
     # Normalise chain names to lowercase
     available_chains = [c.lower() for c in available_chains]
@@ -141,12 +130,12 @@ async def checkout_page(
     # ── Static mappings ──
     chain_icons = {
         'stellar': 'S', 'ethereum': 'E', 'polygon': 'P',
-        'base': 'B', 'tron': 'T', 'solana': 'So',
+        'base': 'B', 'tron': 'T', 'solana': 'So', 'avalanche': 'A',
     }
 
     chain_names = {
         'stellar': 'Stellar', 'ethereum': 'Ethereum', 'polygon': 'Polygon',
-        'base': 'Base', 'tron': 'Tron', 'solana': 'Solana',
+        'base': 'Base', 'tron': 'Tron', 'solana': 'Solana', 'avalanche': 'Avalanche',
     }
 
     # Chain logos (CDN SVGs)
@@ -156,6 +145,7 @@ async def checkout_page(
         'polygon':  '/public/assets/polygon.png',
         'base':     '/public/assets/base.png',
         'tron':     '/public/assets/tron.png',
+        'avalanche': '/public/assets/avalanche.png',
     }
 
     currency_symbols = {
@@ -199,6 +189,10 @@ async def checkout_page(
             {'name': 'Trust Wallet', 'abbr': 'TW', 'color': '#3375bb', 'bg': '#eef5ff', 'url': 'https://trustwallet.com/',          'icon': ''},
             {'name': 'TokenPocket',  'abbr': 'TP', 'color': '#2979ff', 'bg': '#e3f2fd', 'url': 'https://www.tokenpocket.pro/',      'icon': ''},
         ],
+        'avalanche': [
+            {'name': 'Core',         'abbr': 'CO', 'color': '#e84142', 'bg': '#fef2f2', 'url': 'https://core.app/',                 'icon': ''},
+            {'name': 'MetaMask',     'abbr': 'MM', 'color': '#e2761b', 'bg': '#fef3e2', 'url': 'https://metamask.io/',              'icon': 'https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg'},
+        ],
     }
 
     # Build structured chain list for the sidebar
@@ -220,6 +214,7 @@ async def checkout_page(
         'polygon':  {'abbr': 'MM', 'label': 'MetaMask - Polygon',       'bg': '#fef3e2', 'url': 'https://metamask.io/',           'icon': 'https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg'},
         'base':     {'abbr': 'CB', 'label': 'Coinbase Wallet - Base',   'bg': '#eff6ff', 'url': 'https://www.coinbase.com/wallet','icon': ''},
         'tron':     {'abbr': 'TL', 'label': 'TronLink - Tron Wallet',   'bg': '#fef2f2', 'url': 'https://www.tronlink.org/',      'icon': ''},
+        'avalanche':{'abbr': 'CO', 'label': 'Core Wallet - Avalanche',  'bg': '#fef2f2', 'url': 'https://core.app/',              'icon': ''},
     }
     recommended_wallet = _rec.get(current_chain, _rec['ethereum'])
 
@@ -304,9 +299,16 @@ async def checkout_page(
             token_contract = settings.POLYGON_USDT_ADDRESS
 
     elif current_chain == 'base':
-        chain_id = settings.BASE_CHAIN_ID
+        chain_id = getattr(settings, 'BASE_CHAIN_ID', None)
         if current_token == 'USDC':
-            token_contract = settings.BASE_USDC_ADDRESS
+            token_contract = getattr(settings, 'BASE_USDC_ADDRESS', None)
+            
+    elif current_chain == 'avalanche':
+        chain_id = getattr(settings, 'AVALANCHE_CHAIN_ID', None)
+        if current_token == 'USDC':
+            token_contract = getattr(settings, 'AVALANCHE_USDC_ADDRESS', None)
+        elif current_token == 'USDT':
+            token_contract = getattr(settings, 'AVALANCHE_USDT_ADDRESS', None)
             
     elif current_chain == 'tron':
         if current_token == 'USDT':
