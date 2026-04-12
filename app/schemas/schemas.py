@@ -5,6 +5,52 @@ from decimal import Decimal
 from enum import Enum
 
 
+# ============= MONETARY AMOUNT SCHEMA =============
+
+class MonetaryAmount(BaseModel):
+    """
+    Standardized monetary amount structure with currency metadata.
+    Used across all API responses for consistent currency handling.
+    """
+    # Primary amount in merchant's preferred currency
+    amount: Decimal = Field(..., description="Numeric amount in the specified currency")
+    currency: str = Field(..., min_length=3, max_length=10, description="ISO 4217 currency code (e.g., USD, EUR, INR)")
+    symbol: str = Field(..., max_length=10, description="Currency symbol (e.g., $, €, ₹)")
+    formatted: str = Field(..., description="Pre-formatted display string (e.g., '$1,234.56', '₹1,02,345.67')")
+    
+    # Optional: USD equivalent for reference
+    amount_usd: Optional[Decimal] = Field(None, description="USD equivalent amount")
+    formatted_usd: Optional[str] = Field(None, description="Pre-formatted USD string (e.g., '$1,234.56')")
+    
+    # Optional: Original crypto amount tracking
+    amount_crypto: Optional[Decimal] = Field(None, description="Crypto token amount (e.g., USDC amount)")
+    crypto_token: Optional[str] = Field(None, description="Token symbol (e.g., USDC, USDT, PYUSD)")
+    crypto_chain: Optional[str] = Field(None, description="Blockchain network (e.g., polygon, ethereum, stellar)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "amount": 828.50,
+                "currency": "INR",
+                "symbol": "₹",
+                "formatted": "₹828.50",
+                "amount_usd": 10.00,
+                "formatted_usd": "$10.00",
+                "amount_crypto": 10.00,
+                "crypto_token": "USDC",
+                "crypto_chain": "polygon"
+            }
+        }
+
+
+class MerchantCurrency(BaseModel):
+    """Merchant's currency preference metadata"""
+    currency: str = Field(..., description="ISO 4217 currency code")
+    symbol: str = Field(..., description="Currency symbol")
+    locale: str = Field(..., description="Locale for formatting (e.g., en_US, en_IN)")
+    decimal_places: int = Field(default=2, description="Number of decimal places")
+
+
 # ============= ENUMS =============
 
 class ChainEnum(str, Enum):
@@ -1136,11 +1182,114 @@ class MerchantRole(str, Enum):
     VIEWER = "viewer"
 
 
+# ============= TEAM AUTHENTICATION SCHEMAS =============
+
+class TeamLoginRequest(BaseModel):
+    """Team member login request"""
+    email: EmailStr
+    password: str = Field(..., min_length=1)
+
+
+class TeamLoginResponse(BaseModel):
+    """Team member login response"""
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int = 3600  # 1 hour in seconds
+    team_member: dict  # Basic team member info
+
+
+class RefreshTokenRequest(BaseModel):
+    """Refresh token request"""
+    refresh_token: str = Field(..., min_length=1)
+
+
+class RefreshTokenResponse(BaseModel):
+    """Refresh token response"""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = 3600
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Forgot password request"""
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password with token"""
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, description="New password (min 8 chars)")
+
+
+class ChangePasswordRequest(BaseModel):
+    """Change password for authenticated user"""
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, description="New password (min 8 chars)")
+
+
+# ============= TEAM MANAGEMENT SCHEMAS =============
+
 class TeamMemberInvite(BaseModel):
     """Invite a team member"""
     email: EmailStr
     name: Optional[str] = None
     role: MerchantRole = Field(default=MerchantRole.VIEWER)
+
+
+class CustomPermissions(BaseModel):
+    """Custom permission grants and revokes"""
+    grant: Optional[List[str]] = Field(default=[], description="Permission codes to grant")
+    revoke: Optional[List[str]] = Field(default=[], description="Permission codes to revoke")
+
+
+class CreateTeamMemberRequest(BaseModel):
+    """Create a team member with password"""
+    email: EmailStr
+    name: Optional[str] = None
+    role: MerchantRole = Field(default=MerchantRole.VIEWER)
+    
+    # Password options
+    password: Optional[str] = Field(None, min_length=8, description="Custom password")
+    auto_generate_password: bool = Field(default=False, description="Auto-generate secure password")
+    
+    # Invitation
+    send_invite_email: bool = Field(default=True, description="Send invitation email")
+    
+    # Custom permissions
+    custom_permissions: Optional[CustomPermissions] = None
+
+
+class CreateTeamMemberResponse(BaseModel):
+    """Create team member response"""
+    id: str
+    email: str
+    name: Optional[str] = None
+    role: str
+    invite_token: Optional[str] = None
+    temporary_password: Optional[str] = None  # Only returned if auto_generate_password=true
+    message: str
+
+
+class ResetMemberPasswordRequest(BaseModel):
+    """Admin reset member password"""
+    new_password: Optional[str] = Field(None, min_length=8, description="New password")
+    auto_generate_password: bool = Field(default=False, description="Auto-generate secure password")
+    send_email: bool = Field(default=True, description="Send password reset email")
+
+
+class TeamMemberSessionResponse(BaseModel):
+    """Team member session info"""
+    id: str
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    last_activity: datetime
+    expires_at: datetime
+    is_current: bool = False
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
 
 
 class TeamMemberUpdate(BaseModel):
@@ -1170,6 +1319,67 @@ class TeamList(BaseModel):
     """List of team members"""
     members: List[TeamMemberResponse]
     total: int
+
+
+# ============= PERMISSION SCHEMAS =============
+
+class PermissionResponse(BaseModel):
+    """Permission definition"""
+    code: str
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class RolePermissionsResponse(BaseModel):
+    """Role permissions response"""
+    role: str
+    permissions: List[PermissionResponse]
+
+
+class MemberPermissionsResponse(BaseModel):
+    """Team member effective permissions"""
+    member_id: str
+    role: str
+    role_permissions: List[str]
+    custom_granted: List[str]
+    custom_revoked: List[str]
+    effective_permissions: List[str]
+
+
+class UpdatePermissionsRequest(BaseModel):
+    """Update team member custom permissions"""
+    grant: Optional[List[str]] = Field(default=[], description="Permission codes to grant")
+    revoke: Optional[List[str]] = Field(default=[], description="Permission codes to revoke")
+
+
+class ActivityLogResponse(BaseModel):
+    """Activity log entry"""
+    id: str
+    team_member_id: Optional[str] = None
+    team_member_email: Optional[str] = None
+    team_member_name: Optional[str] = None
+    action: str
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    details: Optional[dict] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class ActivityLogList(BaseModel):
+    """List of activity logs"""
+    items: List[ActivityLogResponse]
+    total: int
+    page: int
+    page_size: int
 
 
 # ============= IDEMPOTENCY SCHEMAS =============

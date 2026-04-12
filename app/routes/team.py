@@ -1,24 +1,39 @@
 """
 Team Management API Routes
-Multi-user access for merchant accounts
+Multi-user access for merchant accounts with RBAC support
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+import logging
 
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password
 from app.core import require_merchant
+from app.core.team_middleware import get_current_team_member
+from app.core.permissions import get_effective_permissions, has_permission
+from app.core.sessions import revoke_all_sessions, get_active_sessions
+from app.core.activity_logger import log_activity, log_password_reset, log_session_revoked
+from app.core.team_auth import (
+    hash_password as team_hash_password,
+    validate_password_strength,
+    generate_secure_password,
+)
 from app.models.models import Merchant, MerchantUser, MerchantRole as DBMerchantRole
 from app.schemas.schemas import (
-    TeamMemberInvite, TeamMemberUpdate, TeamMemberResponse, TeamList, MerchantRole
+    TeamMemberInvite, TeamMemberUpdate, TeamMemberResponse, TeamList, MerchantRole,
+    CreateTeamMemberRequest, CreateTeamMemberResponse, ResetMemberPasswordRequest,
+    TeamMemberSessionResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/team", tags=["Team"])
+router_v1 = APIRouter(prefix="/api/v1/team", tags=["Team API v1"])  # For /api/v1 prefixed calls
 
 
 def generate_invite_token() -> str:
@@ -62,6 +77,7 @@ def check_team_permission(user: MerchantUser, permission: str) -> bool:
 
 
 @router.post("/invite", response_model=TeamMemberResponse)
+@router_v1.post("/invite", response_model=TeamMemberResponse)
 async def invite_team_member(
     invite_data: TeamMemberInvite,
     background_tasks: BackgroundTasks,
@@ -135,12 +151,13 @@ async def invite_team_member(
 
 
 @router.get("", response_model=TeamList)
+@router_v1.get("", response_model=TeamList)
 async def list_team_members(
     db: Session = Depends(get_db)
 ):
-    """List all team members for the merchant."""
-    # TEMP: Show all data (no auth)
-    query = db.query(MerchantUser)
+    """List all active team members for the merchant."""
+    # Only show active members (exclude soft-deleted ones)
+    query = db.query(MerchantUser).filter(MerchantUser.is_active == True)
     
     members = query.order_by(MerchantUser.created_at).all()
     
@@ -151,6 +168,7 @@ async def list_team_members(
 
 
 @router.get("/{member_id}", response_model=TeamMemberResponse)
+@router_v1.get("/{member_id}", response_model=TeamMemberResponse)
 async def get_team_member(
     member_id: str,
     db: Session = Depends(get_db)
@@ -166,6 +184,7 @@ async def get_team_member(
 
 
 @router.patch("/{member_id}", response_model=TeamMemberResponse)
+@router_v1.patch("/{member_id}", response_model=TeamMemberResponse)
 async def update_team_member(
     member_id: str,
     update_data: TeamMemberUpdate,
@@ -215,6 +234,7 @@ async def update_team_member(
 
 
 @router.delete("/{member_id}")
+@router_v1.delete("/{member_id}")
 async def remove_team_member(
     member_id: str,
     db: Session = Depends(get_db),
@@ -249,7 +269,335 @@ async def remove_team_member(
     return {"message": "Team member removed", "id": member_id}
 
 
+# ========================
+# RBAC-ENHANCED ENDPOINTS
+# ========================
+
+@router.post("/members", response_model=CreateTeamMemberResponse)
+@router_v1.post("/members", response_model=CreateTeamMemberResponse)
+async def create_team_member(
+    member_data: CreateTeamMemberRequest,
+    current_user: dict = Depends(require_merchant),
+    db: Session = Depends(get_db),
+):
+    """
+    Create a team member with password (RBAC-protected).
+    
+    Requires team.create permission or merchant owner access.
+    Can auto-generate a secure password or accept a custom one.
+    """
+    # Get or create owner team member for the merchant
+    merchant_id = current_user["id"]
+    owner_member = db.query(MerchantUser).filter(
+        and_(
+            MerchantUser.merchant_id == merchant_id,
+            MerchantUser.role == DBMerchantRole.OWNER
+        )
+    ).first()
+    
+    # If no owner exists, merchant has full access (backward compatibility)
+    if owner_member:
+        # Check permission for existing team structure
+        permissions = await get_effective_permissions(str(owner_member.id), db)
+        if not has_permission(permissions, "team.create"):
+            raise HTTPException(status_code=403, detail="Permission denied: team.create required")
+        current_team_member = owner_member
+    else:
+        # Merchant owner has implicit permission
+        current_team_member = None
+    
+    # Check for existing member
+    existing = db.query(MerchantUser).filter(
+        and_(
+            MerchantUser.merchant_id == merchant_id,
+            MerchantUser.email == member_data.email.lower()
+        )
+    ).first()
+    
+    if existing and existing.is_active:
+        raise HTTPException(status_code=400, detail="User is already a team member")
+    
+    # Cannot create owner role
+    if member_data.role == MerchantRole.OWNER:
+        raise HTTPException(status_code=400, detail="Cannot create users with owner role")
+    
+    # Handle password
+    temporary_password = None
+    password_hash = None
+    
+    if member_data.auto_generate_password:
+        temporary_password = generate_secure_password()
+        password_hash = team_hash_password(temporary_password)
+    elif member_data.password:
+        is_valid, error_msg = validate_password_strength(member_data.password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        password_hash = team_hash_password(member_data.password)
+    else:
+        # No password provided - will create invitation flow
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide either 'password' or set 'auto_generate_password=true'. Use POST /team/invite for invitation flow."
+        )
+    
+    if existing and not existing.is_active:
+        # Reactivate deactivated member
+        existing.is_active = True
+        existing.role = DBMerchantRole(member_data.role.value)
+        existing.name = member_data.name
+        if password_hash:
+            existing.password_hash = password_hash
+        existing.created_by = current_team_member.id if current_team_member else None
+        existing.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(existing)
+        
+        # Return appropriate message
+        if password_hash:
+            message = "Account reactivated successfully! User can login immediately."
+        else:
+            message = "Account reactivated. Invitation sent to set password."
+        
+        return CreateTeamMemberResponse(
+            id=str(existing.id),
+            email=existing.email,
+            name=existing.name,
+            role=existing.role.value,
+            temporary_password=temporary_password,
+            message=message,
+        )
+    
+    # Create new member
+    # Only generate invite token if NO password was provided
+    invite_token = None if password_hash else generate_invite_token()
+    
+    member = MerchantUser(
+        merchant_id=merchant_id,
+        email=member_data.email.lower(),
+        name=member_data.name,
+        role=DBMerchantRole(member_data.role.value),
+        password_hash=password_hash,
+        invite_token=invite_token,
+        invite_expires=datetime.utcnow() + timedelta(days=7) if invite_token else None,
+        created_by=current_team_member.id if current_team_member else None,
+    )
+    
+    db.add(member)
+    db.commit()
+    db.refresh(member)
+    
+    # Log activity
+    creator_email = current_team_member.email if current_team_member else current_user.get("email", "merchant_owner")
+    await log_activity(
+        merchant_id=str(merchant_id),
+        team_member_id=str(current_team_member.id) if current_team_member else None,
+        action="team.member_created",
+        resource_type="team_member",
+        resource_id=str(member.id),
+        details={
+            "email": member.email,
+            "role": member.role.value,
+            "created_by": creator_email,
+            "has_password": password_hash is not None,
+        },
+        db=db,
+    )
+    
+    logger.info(f"Team member created: {member.email} by {creator_email} (password_set={password_hash is not None})")
+    
+    # Return appropriate message based on whether password was set
+    if password_hash:
+        message = "Account created successfully! User can login immediately."
+    else:
+        message = "Invitation sent. User must accept invitation to set password."
+    
+    return CreateTeamMemberResponse(
+        id=str(member.id),
+        email=member.email,
+        name=member.name,
+        role=member.role.value,
+        invite_token=invite_token,
+        temporary_password=temporary_password,
+        message=message,
+    )
+
+
+@router.post("/members/{member_id}/reset-password")
+@router_v1.post("/members/{member_id}/reset-password")
+async def reset_member_password(
+    member_id: str,
+    reset_data: ResetMemberPasswordRequest,
+    request: Request,
+    current_team_member: MerchantUser = Depends(get_current_team_member),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin reset a team member's password.
+    
+    Requires team.update permission.
+    Cannot reset owner's password unless you are the owner.
+    """
+    # Check permission
+    permissions = await get_effective_permissions(str(current_team_member.id), db)
+    if not has_permission(permissions, "team.update"):
+        raise HTTPException(status_code=403, detail="Permission denied: team.update required")
+    
+    # Find target member
+    target_member = db.query(MerchantUser).filter(
+        and_(
+            MerchantUser.id == member_id,
+            MerchantUser.merchant_id == current_team_member.merchant_id,
+        )
+    ).first()
+    
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    
+    # Cannot reset owner's password unless you are the owner
+    if target_member.role == DBMerchantRole.OWNER and \
+       current_team_member.role != DBMerchantRole.OWNER:
+        raise HTTPException(
+            status_code=400,
+            detail="Only the owner can reset the owner's password"
+        )
+    
+    # Handle password
+    temporary_password = None
+    if reset_data.auto_generate_password:
+        temporary_password = generate_secure_password()
+        target_member.password_hash = team_hash_password(temporary_password)
+    elif reset_data.new_password:
+        is_valid, error_msg = validate_password_strength(reset_data.new_password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        target_member.password_hash = team_hash_password(reset_data.new_password)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide new_password or set auto_generate_password=true"
+        )
+    
+    # Reset security fields
+    target_member.failed_login_attempts = 0
+    target_member.locked_until = None
+    db.commit()
+    
+    # Revoke all existing sessions
+    await revoke_all_sessions(member_id, db)
+    
+    # Log the password reset
+    await log_password_reset(
+        team_member_id=member_id,
+        merchant_id=str(current_team_member.merchant_id),
+        reset_by=str(current_team_member.id),
+        request=request,
+        db=db,
+    )
+    
+    result = {
+        "message": "Password has been reset",
+        "member_id": member_id,
+        "sessions_revoked": True,
+    }
+    if temporary_password:
+        result["temporary_password"] = temporary_password
+    
+    return result
+
+
+@router.post("/members/{member_id}/revoke-sessions")
+@router_v1.post("/members/{member_id}/revoke-sessions")
+async def revoke_member_sessions(
+    member_id: str,
+    current_team_member: MerchantUser = Depends(get_current_team_member),
+    db: Session = Depends(get_db),
+):
+    """
+    Revoke all active sessions for a team member.
+    
+    Requires team.update permission (or revoking own sessions).
+    """
+    # Allow self-service or require team.update
+    if str(current_team_member.id) != member_id:
+        permissions = await get_effective_permissions(str(current_team_member.id), db)
+        if not has_permission(permissions, "team.update"):
+            raise HTTPException(status_code=403, detail="Permission denied: team.update required")
+    
+    # Verify target is in same merchant
+    target_member = db.query(MerchantUser).filter(
+        and_(
+            MerchantUser.id == member_id,
+            MerchantUser.merchant_id == current_team_member.merchant_id,
+        )
+    ).first()
+    
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    
+    count = await revoke_all_sessions(member_id, db)
+    
+    # Log session revocation
+    await log_session_revoked(
+        team_member_id=member_id,
+        merchant_id=str(current_team_member.merchant_id),
+        revoked_by=str(current_team_member.id),
+        sessions_count=count,
+        db=db,
+    )
+    
+    return {
+        "message": f"Revoked {count} session(s)",
+        "sessions_revoked": count,
+    }
+
+
+@router.get("/members/{member_id}/sessions", response_model=list[TeamMemberSessionResponse])
+@router_v1.get("/members/{member_id}/sessions", response_model=list[TeamMemberSessionResponse])
+async def list_member_sessions(
+    member_id: str,
+    current_team_member: MerchantUser = Depends(get_current_team_member),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all active sessions for a team member.
+    
+    Can view own sessions or requires team.view permission.
+    """
+    # Allow self-service or require team.view
+    if str(current_team_member.id) != member_id:
+        permissions = await get_effective_permissions(str(current_team_member.id), db)
+        if not has_permission(permissions, "team.view"):
+            raise HTTPException(status_code=403, detail="Permission denied: team.view required")
+    
+    # Verify target is in same merchant
+    target_member = db.query(MerchantUser).filter(
+        and_(
+            MerchantUser.id == member_id,
+            MerchantUser.merchant_id == current_team_member.merchant_id,
+        )
+    ).first()
+    
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    
+    sessions = await get_active_sessions(member_id, db)
+    
+    return [
+        TeamMemberSessionResponse(
+            id=str(s.id),
+            ip_address=s.ip_address,
+            user_agent=s.user_agent,
+            last_activity=s.last_activity,
+            expires_at=s.expires_at,
+            is_current=False,  # We can't easily determine this from the session alone
+            created_at=s.created_at,
+        )
+        for s in sessions
+    ]
+
+
 @router.post("/{member_id}/resend-invite")
+@router_v1.post("/{member_id}/resend-invite")
 async def resend_invite(
     member_id: str,
     background_tasks: BackgroundTasks,
@@ -290,6 +638,7 @@ async def resend_invite(
 
 
 @router.get("/roles/permissions")
+@router_v1.get("/roles/permissions")
 async def list_role_permissions():
     """
     List available roles and their permissions.
@@ -311,6 +660,7 @@ async def list_role_permissions():
 # ========================
 
 @router.post("/accept-invite")
+@router_v1.post("/accept-invite")
 async def accept_invite(
     token: str,
     password: str,

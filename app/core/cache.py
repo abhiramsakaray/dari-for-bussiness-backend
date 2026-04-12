@@ -36,6 +36,36 @@ REGION_TTL = {
 MAX_ENTRIES_PER_REGION = 1024
 
 
+# Redis client (optional, for distributed caching)
+_redis_client = None
+
+
+def get_redis_client():
+    """
+    Get Redis client for distributed caching.
+    Returns None if Redis is not available.
+    """
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis
+            from app.core.config import settings
+            
+            # Try to connect to Redis if configured
+            redis_url = getattr(settings, 'REDIS_URL', None)
+            if redis_url:
+                _redis_client = redis.from_url(redis_url, decode_responses=False)
+                # Test connection
+                _redis_client.ping()
+                logger.info("Redis client initialized successfully")
+            else:
+                logger.info("Redis URL not configured, using memory cache only")
+        except Exception as e:
+            logger.warning(f"Redis not available: {e}")
+            _redis_client = None
+    return _redis_client
+
+
 class _CacheRegion:
     """Thread-safe LRU cache region with TTL expiration."""
 

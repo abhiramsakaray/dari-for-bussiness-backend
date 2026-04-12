@@ -198,10 +198,15 @@ class Merchant(Base):
     # Subscription tier
     subscription_tier = Column(String(20), default="free", nullable=False)  # free, growth, business, enterprise
     
-    # Currency (derived from country during onboarding)
+    # Currency preferences (derived from country during onboarding)
     base_currency = Column(String(10), default="USD", nullable=False)
     currency_symbol = Column(String(10), default="$", nullable=False)
     currency_name = Column(String(50), default="US Dollar", nullable=False)
+    
+    # Currency formatting preferences (for backend-driven currency handling)
+    currency_preference = Column(String(10), default="USD", nullable=False, index=True)  # ISO 4217 code
+    currency_locale = Column(String(10), default="en_US", nullable=False)  # Locale for formatting
+    currency_decimal_places = Column(Integer, default=2, nullable=False)  # Decimal precision
     
     # Balance tracking
     balance_usdc = Column(Numeric(precision=20, scale=8), default=0, nullable=False)
@@ -732,14 +737,30 @@ class MerchantUser(Base):
     invite_expires = Column(DateTime, nullable=True)
     last_login = Column(DateTime, nullable=True)
     
+    # Password reset
+    password_reset_token = Column(String(255), nullable=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
+    
+    # Security
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    
+    # Audit
+    created_by = Column(UUID(as_uuid=True), ForeignKey("merchant_users.id"), nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
     merchant = relationship("Merchant")
+    creator = relationship("MerchantUser", remote_side=[id], foreign_keys=[created_by])
+    sessions = relationship("TeamMemberSession", back_populates="team_member", cascade="all, delete-orphan")
+    custom_permissions = relationship("TeamMemberPermission", foreign_keys="TeamMemberPermission.team_member_id", cascade="all, delete-orphan")
+    activity_logs = relationship("ActivityLog", back_populates="team_member")
     
     __table_args__ = (
         UniqueConstraint('merchant_id', 'email', name='uq_merchant_user_email'),
+        Index('idx_merchant_users_reset_token', 'password_reset_token'),
     )
 
 
@@ -1395,4 +1416,102 @@ class ComplianceScreening(Base):
         Index('ix_compliance_session', 'session_id'),
         Index('ix_compliance_result', 'result'),
         Index('ix_compliance_created', 'created_at'),
+    )
+
+
+
+# ============= TEAM RBAC MODELS =============
+
+class Permission(Base):
+    """Permission definitions for RBAC system"""
+    __tablename__ = "permissions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String(100), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RolePermission(Base):
+    """Maps permissions to roles"""
+    __tablename__ = "role_permissions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role = Column(String(50), nullable=False, index=True)
+    permission_id = Column(UUID(as_uuid=True), ForeignKey("permissions.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    permission = relationship("Permission")
+    
+    __table_args__ = (
+        UniqueConstraint('role', 'permission_id', name='uq_role_permission'),
+        Index('idx_role_permissions_role', 'role'),
+    )
+
+
+class TeamMemberPermission(Base):
+    """Custom permission grants/revokes per team member"""
+    __tablename__ = "team_member_permissions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_member_id = Column(UUID(as_uuid=True), ForeignKey("merchant_users.id"), nullable=False)
+    permission_id = Column(UUID(as_uuid=True), ForeignKey("permissions.id"), nullable=False)
+    granted = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("merchant_users.id"), nullable=True)
+    
+    team_member = relationship("MerchantUser", foreign_keys=[team_member_id])
+    permission = relationship("Permission")
+    creator = relationship("MerchantUser", foreign_keys=[created_by])
+    
+    __table_args__ = (
+        UniqueConstraint('team_member_id', 'permission_id', name='uq_member_permission'),
+        Index('idx_member_permissions_member', 'team_member_id'),
+    )
+
+
+class ActivityLog(Base):
+    """Audit trail for team member actions"""
+    __tablename__ = "activity_logs"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    team_member_id = Column(UUID(as_uuid=True), ForeignKey("merchant_users.id"), nullable=True)
+    action = Column(String(100), nullable=False, index=True)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(String(255), nullable=True)
+    details = Column(JSON, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    merchant = relationship("Merchant")
+    team_member = relationship("MerchantUser", back_populates="activity_logs")
+    
+    __table_args__ = (
+        Index('idx_activity_merchant_member', 'merchant_id', 'team_member_id'),
+        Index('idx_activity_action_created', 'action', 'created_at'),
+    )
+
+
+class TeamMemberSession(Base):
+    """Track active team member sessions"""
+    __tablename__ = "team_member_sessions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_member_id = Column(UUID(as_uuid=True), ForeignKey("merchant_users.id"), nullable=False)
+    token_hash = Column(String(255), nullable=False, index=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_activity = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    
+    team_member = relationship("MerchantUser", back_populates="sessions")
+    
+    __table_args__ = (
+        Index('idx_session_member_active', 'team_member_id', 'revoked_at'),
     )

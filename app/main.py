@@ -8,6 +8,7 @@ import os
 
 from app.core.config import settings
 from app.core.security_middleware import SecurityHeadersMiddleware
+from app.core.currency_middleware import MerchantCurrencyMiddleware
 from app.core.monitoring import (
     MetricsMiddleware,
     get_metrics_response,
@@ -34,6 +35,10 @@ from app.routes import (
     transactions,
     # Receipts
     receipts,
+    # Team RBAC
+    team_auth,
+    permissions as permissions_routes,
+    activity_logs,
 )
 
 # Configure logging
@@ -72,6 +77,9 @@ app.add_middleware(
 
 # Security middleware — rate limiting + OWASP headers
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Merchant currency middleware — inject currency preferences into request context
+app.add_middleware(MerchantCurrencyMiddleware)
 
 # Prometheus metrics middleware
 if settings.PROMETHEUS_ENABLED:
@@ -136,7 +144,8 @@ app.include_router(subscriptions.router)  # Recurring payments
 app.include_router(refunds.router)  # Refund processing
 app.include_router(transactions.router)  # Transaction tracking with refund data
 app.include_router(analytics.router)  # Merchant analytics
-app.include_router(team.router)  # Team management
+app.include_router(team.router)  # Team management (legacy /team prefix)
+app.include_router(team.router_v1)  # Team management (/api/v1/team prefix)
 app.include_router(onboarding.router)  # Merchant onboarding flow
 app.include_router(subscription_management.router)  # Subscription management
 app.include_router(billing.router)  # Billing endpoints (alias for subscription)
@@ -155,6 +164,14 @@ app.include_router(tax_reports.router)  # Tax summary, transactions, subscriptio
 
 # Receipts
 app.include_router(receipts.router)  # Payment receipts and PDF generation
+
+# Team RBAC routes
+app.include_router(team_auth.router)  # Team member authentication (legacy /auth/team prefix)
+app.include_router(team_auth.router_v1)  # Team member authentication (/api/v1/auth/team prefix)
+app.include_router(permissions_routes.router)  # Permission management (legacy /team prefix)
+app.include_router(permissions_routes.router_v1)  # Permission management (/api/v1/team prefix)
+app.include_router(activity_logs.router)  # Activity audit logs (legacy /team prefix)
+app.include_router(activity_logs.router_v1)  # Activity audit logs (/api/v1/team prefix)
 
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")
@@ -281,6 +298,34 @@ async def startup_event():
         logger.error(f"Failed to start refund scheduler: {e}", exc_info=True)
     
     logger.info("=" * 60)
+    
+    # Start session cleanup periodic task
+    try:
+        import asyncio
+        from app.core.sessions import cleanup_expired_sessions
+        from app.core.database import SessionLocal
+        
+        async def periodic_session_cleanup():
+            """Clean up expired team member sessions every 6 hours."""
+            while True:
+                try:
+                    await asyncio.sleep(6 * 60 * 60)  # 6 hours
+                    cleanup_db = SessionLocal()
+                    try:
+                        count = await cleanup_expired_sessions(cleanup_db)
+                        if count > 0:
+                            logger.info(f"🧹 Cleaned up {count} expired team member sessions")
+                    finally:
+                        cleanup_db.close()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"Session cleanup error: {e}")
+        
+        asyncio.create_task(periodic_session_cleanup())
+        logger.info("✅ Session cleanup task scheduled (every 6 hours)")
+    except Exception as e:
+        logger.error(f"Failed to start session cleanup: {e}")
 
 
 # Shutdown event
