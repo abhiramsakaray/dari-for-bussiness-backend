@@ -1820,3 +1820,39 @@ class PromoCodeUsageResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+
+# ============= RECEIPT SCHEMAS =============
+
+class ReceiptGenerateRequest(BaseModel):
+    """Request to generate a receipt for a payment"""
+    payment_session_id: str
+    send_email: bool = False
+
+
+class ReceiptResponse(BaseModel):
+    """Receipt response"""
+    id: str
+    invoice_number: str
+    payment_session_id: str
+    customer_email: str
+    customer_name: Optional[str] = None
+    amount: float
+    currency: str
+    status: str
+    issue_date: str
+    paid_at: Optional[str] = None
+    tx_hash: Optional[str] = None
+    chain: Optional[str] = None
+    token: Optional[str] = None
+    download_url: str
+    view_url: str
+
+
+class ReceiptListResponse(BaseModel):
+    """List of receipts"""
+    receipts: List[ReceiptResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int

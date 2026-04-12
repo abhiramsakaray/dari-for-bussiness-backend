@@ -32,6 +32,8 @@ from app.routes import (
     tax_reports,
     # Transactions & refund tracking
     transactions,
+    # Receipts
+    receipts,
 )
 
 # Configure logging
@@ -150,6 +152,9 @@ app.include_router(web3_subscriptions.router)  # Web3 recurring payments
 
 # Tax & compliance reports
 app.include_router(tax_reports.router)  # Tax summary, transactions, subscription revenue
+
+# Receipts
+app.include_router(receipts.router)  # Payment receipts and PDF generation
 
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")
