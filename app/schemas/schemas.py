@@ -187,6 +187,7 @@ class SubscriptionPlanInfo(BaseModel):
     tier: SubscriptionTierEnum
     name: str
     monthly_price: float
+    currency: str = "USD"  # Currency code for the price
     transaction_fee_min: float
     transaction_fee_max: float
     monthly_volume_limit: Optional[float]
@@ -214,6 +215,7 @@ class SubscriptionResponse(BaseModel):
     tier: str
     status: str
     monthly_price: float
+    currency: str = "USD"  # Currency code for prices
     transaction_fee_percent: float
     monthly_volume_limit: Optional[float]
     payment_link_limit: Optional[int]
@@ -229,6 +231,8 @@ class SubscriptionResponse(BaseModel):
     monthly_price_local: Optional[LocalCurrencyAmount] = None
     current_volume_local: Optional[LocalCurrencyAmount] = None
     volume_limit_local: Optional[LocalCurrencyAmount] = None
+    # Available plans in merchant's currency
+    available_plans: Optional[dict] = None
     
     class Config:
         from_attributes = True

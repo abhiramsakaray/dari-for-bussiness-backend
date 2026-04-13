@@ -115,17 +115,47 @@ SUBSCRIPTION_PLANS = {
 # ============= GET ALL PLANS =============
 
 @router.get("/plans", response_model=List[SubscriptionPlanInfo])
-async def get_subscription_plans():
-    """Get all available subscription plans with pricing and features."""
+async def get_subscription_plans(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get all available subscription plans with pricing in merchant's currency."""
     try:
         logger.info("Fetching subscription plans")
+        
+        # Get merchant's currency
+        merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
+        if not merchant:
+            raise HTTPException(status_code=404, detail="Merchant not found")
+        
+        currency_code, _, _ = get_currency_for_country(merchant.country)
+        
+        # Import exchange rate service
+        from app.services.exchange_rate_service import get_exchange_rate_service
+        exchange_service = get_exchange_rate_service()
+        
         plans = []
         for tier, plan_info in SUBSCRIPTION_PLANS.items():
             try:
+                # Convert USD price to merchant's currency
+                usd_price = Decimal(str(plan_info["monthly_price"]))
+                if currency_code != "USD":
+                    converted_price = await exchange_service.convert(usd_price, "USD", currency_code)
+                    # Round to appropriate precision
+                    if currency_code == "INR":
+                        # Round to nearest 100 for INR
+                        converted_price = (converted_price / 100).quantize(Decimal("1")) * 100
+                    else:
+                        # Round to 2 decimal places for other currencies
+                        converted_price = converted_price.quantize(Decimal("0.01"))
+                else:
+                    converted_price = usd_price
+                
                 plan = SubscriptionPlanInfo(
                     tier=tier,
                     name=plan_info["name"],
-                    monthly_price=plan_info["monthly_price"],
+                    monthly_price=float(converted_price),
+                    currency=currency_code,
                     transaction_fee_min=plan_info["transaction_fee_min"],
                     transaction_fee_max=plan_info["transaction_fee_max"],
                     monthly_volume_limit=plan_info["monthly_volume_limit"],
@@ -139,7 +169,7 @@ async def get_subscription_plans():
                 logger.error(f"Error creating plan info for {tier}: {e}")
                 continue
         
-        logger.info(f"Successfully fetched {len(plans)} subscription plans")
+        logger.info(f"Successfully fetched {len(plans)} subscription plans in {currency_code}")
         return plans
     except Exception as e:
         logger.error(f"Error fetching subscription plans: {e}")
@@ -156,7 +186,7 @@ async def get_current_subscription(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get merchant's current subscription details."""
+    """Get merchant's current subscription details with available plans in merchant's currency."""
     merchant = db.query(Merchant).filter(Merchant.id == uuid.UUID(current_user["id"])).first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found")
@@ -172,18 +202,70 @@ async def get_current_subscription(
 
     currency_code, currency_symbol, _ = get_currency_for_country(merchant.country)
 
-    monthly_price = float(subscription.monthly_price)
+    # Import exchange service early for price conversion
+    from app.services.exchange_rate_service import get_exchange_rate_service
+    exchange_service = get_exchange_rate_service()
+
+    # Convert monthly_price from USD to merchant's currency
+    monthly_price_usd = float(subscription.monthly_price)
+    if currency_code != "USD":
+        monthly_price_converted = await exchange_service.convert(
+            Decimal(str(monthly_price_usd)), "USD", currency_code
+        )
+        # Round to appropriate precision
+        if currency_code == "INR":
+            monthly_price_converted = (monthly_price_converted / 100).quantize(Decimal("1")) * 100
+        else:
+            monthly_price_converted = monthly_price_converted.quantize(Decimal("0.01"))
+        monthly_price = float(monthly_price_converted)
+    else:
+        monthly_price = monthly_price_usd
+
     current_volume = float(subscription.current_volume)
     volume_limit = float(subscription.monthly_volume_limit) if subscription.monthly_volume_limit else None
 
-    price_local = await build_local_amount(monthly_price, currency_code, currency_symbol)
+    price_local = await build_local_amount(monthly_price_usd, currency_code, currency_symbol)
     volume_local = await build_local_amount(current_volume, currency_code, currency_symbol)
     vol_limit_local = await build_local_amount(volume_limit, currency_code, currency_symbol) if volume_limit else None
+    
+    available_plans = {}
+    for tier, plan_info in SUBSCRIPTION_PLANS.items():
+        try:
+            # Convert USD price to merchant's currency
+            usd_price = Decimal(str(plan_info["monthly_price"]))
+            if currency_code != "USD":
+                converted_price = await exchange_service.convert(usd_price, "USD", currency_code)
+                # Round to appropriate precision
+                if currency_code == "INR":
+                    converted_price = (converted_price / 100).quantize(Decimal("1")) * 100
+                else:
+                    converted_price = converted_price.quantize(Decimal("0.01"))
+            else:
+                converted_price = usd_price
+            
+            available_plans[tier] = {
+                "id": tier,
+                "name": plan_info["name"],
+                "price": float(converted_price),
+                "currency": currency_code,
+                "billing_period": "month",
+                "features": {
+                    "transaction_fee": f"{plan_info['transaction_fee_min']}-{plan_info['transaction_fee_max']}%",
+                    "monthly_volume_limit": plan_info["monthly_volume_limit"],
+                    "payment_links": plan_info["payment_link_limit"],
+                    "invoices": plan_info["invoice_limit"],
+                    "team_members": plan_info["team_member_limit"],
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error converting price for {tier}: {e}")
+            continue
 
     return SubscriptionResponse(
         tier=subscription.tier,
         status=subscription.status,
         monthly_price=monthly_price,
+        currency=currency_code,
         transaction_fee_percent=float(subscription.transaction_fee_percent),
         monthly_volume_limit=volume_limit,
         payment_link_limit=subscription.payment_link_limit,
@@ -198,6 +280,7 @@ async def get_current_subscription(
         monthly_price_local=LocalCurrencyAmount(**price_local),
         current_volume_local=LocalCurrencyAmount(**volume_local),
         volume_limit_local=LocalCurrencyAmount(**vol_limit_local) if vol_limit_local else None,
+        available_plans=available_plans,
     )
 
 

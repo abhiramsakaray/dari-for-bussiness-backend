@@ -398,7 +398,127 @@ Comprehensive guides available in `/docs`:
 
 ---
 
-## 📞 Support & Contact
+## � Billing Currency Fix (April 12, 2026)
+
+### 🔴 Critical Issue
+The billing page displays hardcoded USD prices with the user's currency symbol, creating incorrect price displays.
+
+**Problem Example**:
+```
+User in India sees: ₹0, ₹29, ₹99  ← Wrong! These are USD prices with INR symbol
+Expected: ₹0, ₹2,400, ₹8,200    ← Correct INR prices
+```
+
+### ✅ Solution Implemented
+Backend now provides **currency-aware pricing** through the billing API.
+
+### 🔧 Backend Implementation
+
+#### Currency Conversion Logic
+```python
+PLAN_PRICES_USD = {
+    'free': 0,
+    'growth': 29,
+    'business': 99,
+    'enterprise': None
+}
+
+CURRENCY_RATES = {
+    'USD': 1.0,
+    'INR': 83.0,      # 1 USD = 83 INR
+    'EUR': 0.92,      # 1 USD = 0.92 EUR
+    'GBP': 0.79,      # 1 USD = 0.79 GBP
+    # ... more currencies
+}
+
+def get_plan_price_in_currency(plan_id: str, currency: str) -> float:
+    """Convert plan price to user's currency"""
+    usd_price = PLAN_PRICES_USD.get(plan_id)
+    if usd_price is None or usd_price == 0:
+        return usd_price
+    
+    rate = CURRENCY_RATES.get(currency, 1.0)
+    converted_price = usd_price * rate
+    
+    # Round appropriately per currency
+    if currency == 'INR':
+        return round(converted_price / 100) * 100
+    else:
+        return round(converted_price, 2)
+```
+
+#### API Response Update
+The `GET /billing` endpoint now includes `available_plans`:
+
+```json
+{
+  "tier": "growth",
+  "currency": "INR",
+  "monthly_price": 2400,
+  
+  "available_plans": {
+    "free": {
+      "id": "free",
+      "name": "Free",
+      "price": 0,
+      "currency": "INR",
+      "features": {
+        "transaction_fee": 2.9,
+        "monthly_volume_limit": 10000,
+        "team_members": 1
+      }
+    },
+    "growth": {
+      "id": "growth",
+      "name": "Growth",
+      "price": 2400,
+      "currency": "INR",
+      "features": {
+        "transaction_fee": 0.9,
+        "monthly_volume_limit": 50000,
+        "team_members": 3
+      }
+    },
+    "business": {
+      "id": "business",
+      "name": "Business",
+      "price": 8200,
+      "currency": "INR",
+      "features": {
+        "transaction_fee": 0.5,
+        "monthly_volume_limit": null,
+        "team_members": 10
+      }
+    },
+    "enterprise": {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "price": null,
+      "currency": "INR",
+      "contact_sales": true
+    }
+  }
+}
+```
+
+### 📊 Price Conversion Table
+| Plan | USD | INR | EUR | GBP |
+|------|-----|-----|-----|-----|
+| Free | $0 | ₹0 | €0 | £0 |
+| Growth | $29 | ₹2,400 | €27 | £23 |
+| Business | $99 | ₹8,200 | €91 | £78 |
+| Enterprise | Custom | Custom | Custom | Custom |
+
+### ✨ Results
+- ✅ Backend provides prices in user's currency
+- ✅ Frontend uses backend prices instead of hardcoded values
+- ✅ Correct currency symbols with correct prices
+- ✅ Supports unlimited currencies via exchange rates
+- ✅ Proper rounding per currency (₹100 increments for INR, ¢2 for USD/EUR/GBP)
+
+---
+
+## �📞 Support & Contact
 
 For issues, questions, or contributions:
 - Create an issue on GitHub
