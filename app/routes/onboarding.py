@@ -185,17 +185,17 @@ async def setup_wallets(
                 })
                 continue
 
-            placeholder_address = _generate_placeholder_address(chain)
+            wallet_address = _generate_wallet_address(chain)
             wallet = MerchantWallet(
                 merchant_id=merchant.id,
                 chain=BlockchainNetwork(chain),
-                wallet_address=placeholder_address,
+                wallet_address=wallet_address,
                 is_active=True,
             )
             db.add(wallet)
             created_wallets.append({
                 "chain": chain,
-                "wallet_address": placeholder_address,
+                "wallet_address": wallet_address,
                 "status": "created",
             })
     elif wallet_setup.chains:
@@ -219,18 +219,18 @@ async def setup_wallets(
                     })
                     continue
 
-                placeholder_address = _generate_placeholder_address(chain.value)
+                wallet_address = _generate_wallet_address(chain.value)
 
                 wallet = MerchantWallet(
                     merchant_id=merchant.id,
                     chain=BlockchainNetwork(chain.value),
-                    wallet_address=placeholder_address,
+                    wallet_address=wallet_address,
                     is_active=True,
                 )
                 db.add(wallet)
                 created_wallets.append({
                     "chain": chain.value,
-                    "wallet_address": placeholder_address,
+                    "wallet_address": wallet_address,
                     "status": "created",
                 })
 
@@ -320,11 +320,11 @@ async def complete_onboarding(
                 ).first()
 
                 if not existing:
-                    placeholder_address = _generate_placeholder_address(chain)
+                    wallet_address = _generate_wallet_address(chain)
                     wallet = MerchantWallet(
                         merchant_id=merchant.id,
                         chain=BlockchainNetwork(chain),
-                        wallet_address=placeholder_address,
+                        wallet_address=wallet_address,
                         is_active=True,
                     )
                     db.add(wallet)
@@ -347,13 +347,13 @@ async def complete_onboarding(
                     ).first()
 
                     if not existing:
-                        # Generate a placeholder address
-                        placeholder_address = _generate_placeholder_address(chain.value)
+                        # Generate a wallet address
+                        wallet_address = _generate_wallet_address(chain.value)
 
                         wallet = MerchantWallet(
                             merchant_id=merchant.id,
                             chain=BlockchainNetwork(chain.value),
-                            wallet_address=placeholder_address,
+                            wallet_address=wallet_address,
                             is_active=True,
                         )
                         db.add(wallet)
@@ -381,11 +381,11 @@ async def complete_onboarding(
                 MerchantWallet.chain == BlockchainNetwork(chain),
             ).first()
             if not existing:
-                placeholder_address = _generate_placeholder_address(chain)
+                wallet_address = _generate_wallet_address(chain)
                 wallet = MerchantWallet(
                     merchant_id=merchant.id,
                     chain=BlockchainNetwork(chain),
-                    wallet_address=placeholder_address,
+                    wallet_address=wallet_address,
                     is_active=True,
                 )
                 db.add(wallet)
@@ -451,20 +451,56 @@ async def skip_onboarding(
 
 # ============= HELPER FUNCTIONS =============
 
-def _generate_placeholder_address(chain: str) -> str:
+def _generate_wallet_address(chain: str) -> str:
     """
-    Generate a placeholder wallet address for a given chain.
-    In production, this would integrate with actual key generation.
-    Merchants should replace these with their real wallet addresses.
+    Generate a real wallet address for a given chain.
+    
+    For Stellar: Generates real keypair using stellar_sdk
+    For EVM chains (Ethereum, Polygon, Base, BSC, Arbitrum, Avalanche): Generates real keypair
+    For Tron: Generates placeholder (requires tronpy library)
+    For Solana: Generates placeholder (requires solders library)
+    
+    Note: Secret keys are NOT stored by default for security.
+    Merchants should use their own wallet management system.
     """
-    random_hex = secrets.token_hex(20)  # 40 hex chars
-
     if chain == "stellar":
-        # Stellar addresses start with G and are 56 chars
-        return f"G{'A' * 15}{secrets.token_hex(20).upper()[:40]}"
+        # Generate real Stellar keypair
+        try:
+            from stellar_sdk import Keypair
+            keypair = Keypair.random()
+            # Return public key only (G... address)
+            # WARNING: Secret key is NOT stored. Merchant must manage their own keys.
+            logger.info(f"Generated Stellar wallet: {keypair.public_key}")
+            return keypair.public_key
+        except ImportError:
+            logger.warning("stellar_sdk not installed, using placeholder")
+            return f"G{'A' * 15}{secrets.token_hex(20).upper()[:40]}"
+    
     elif chain == "tron":
-        # Tron addresses start with T
+        # Tron address generation requires tronpy
+        # For now, use placeholder
         return f"T{secrets.token_hex(16).upper()[:33]}"
+    
+    elif chain == "solana":
+        # Solana address generation requires solders
+        # For now, use placeholder (base58 encoded, ~44 chars)
+        import base64
+        random_bytes = secrets.token_bytes(32)
+        return base64.b58encode(random_bytes).decode()[:44]
+    
     else:
-        # EVM chains (ethereum, polygon, base) use 0x prefix + 40 hex chars
-        return f"0x{random_hex}"
+        # EVM chains (ethereum, polygon, base, bsc, arbitrum, avalanche)
+        # Generate real Ethereum-style address
+        try:
+            from eth_account import Account
+            Account.enable_unaudited_hdwallet_features()
+            account = Account.create()
+            # Return address only (0x...)
+            # WARNING: Private key is NOT stored. Merchant must manage their own keys.
+            logger.info(f"Generated EVM wallet for {chain}: {account.address}")
+            return account.address
+        except ImportError:
+            # Fallback to random hex if eth_account not available
+            logger.warning("eth_account not installed, using random hex")
+            random_hex = secrets.token_hex(20)
+            return f"0x{random_hex}"

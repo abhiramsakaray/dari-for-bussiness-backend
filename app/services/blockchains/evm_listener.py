@@ -100,12 +100,15 @@ async def process_evm_payment(payment: PaymentInfo):
     """Match confirmed EVM transfer to an open session and mark it PAID."""
     db = SessionLocal()
     try:
+        # BEGIN TRANSACTION with row-level locking
         # Look at CREATED *and* PENDING sessions (PENDING = already detected at 0-conf)
+        from sqlalchemy.orm import with_for_update
+        
         candidates = db.query(PaymentSession).filter(
             PaymentSession.status.in_([PaymentStatus.CREATED, PaymentStatus.PENDING]),
             PaymentSession.chain == payment.chain,
             PaymentSession.token == payment.token_symbol,
-        ).order_by(PaymentSession.created_at.desc()).all()
+        ).with_for_update().order_by(PaymentSession.created_at.desc()).all()
 
         matched_session = _match_session(candidates, payment)
 
@@ -114,14 +117,29 @@ async def process_evm_payment(payment: PaymentInfo):
                 f"No matching open session for confirmed tx {payment.tx_hash} "
                 f"({payment.amount} {payment.token_symbol} to {payment.to_address[:10]}...)"
             )
+            db.rollback()
             return
 
+        # ATOMIC UPDATE: Payment status + merchant balance credit
+        # All-or-nothing transaction prevents partial updates
         matched_session.status = PaymentStatus.PAID
         matched_session.tx_hash = payment.tx_hash
         matched_session.block_number = payment.block_number
         matched_session.confirmations = payment.confirmations
         matched_session.paid_at = datetime.now(timezone.utc)
 
+        # Credit merchant balance WITHIN SAME TRANSACTION
+        try:
+            from app.services.payment_utils import credit_merchant_balance
+            payment_token = matched_session.token or "USDC"
+            credit_amount = matched_session.amount_token or matched_session.amount_usdc or "0"
+            credit_merchant_balance(db, matched_session.merchant_id, payment_token, credit_amount)
+        except Exception as be:
+            logger.error(f"Error crediting balance for session {matched_session.id}: {be}")
+            db.rollback()  # Rollback entire transaction on balance credit failure
+            raise
+
+        # COMMIT TRANSACTION - both payment status and balance update succeed together
         db.commit()
         db.refresh(matched_session)
 
@@ -130,16 +148,7 @@ async def process_evm_payment(payment: PaymentInfo):
             f"from {payment.chain} tx {payment.tx_hash}"
         )
 
-        # Credit merchant balance
-        try:
-            from app.services.payment_utils import credit_merchant_balance
-            payment_token = matched_session.token or "USDC"
-            credit_amount = matched_session.amount_token or matched_session.amount_usdc or "0"
-            credit_merchant_balance(db, matched_session.merchant_id, payment_token, credit_amount)
-        except Exception as be:
-            logger.error(f"Error crediting balance for session {matched_session.id}: {be}")
-
-        # Trigger merchant webhook for the confirmed payment.
+        # Trigger merchant webhook AFTER successful commit
         await send_webhook(matched_session, db)
 
     except Exception as e:

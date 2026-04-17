@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Enum as SQLEnum, Integer, Text, JSON, UniqueConstraint, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Enum as SQLEnum, Integer, Text, JSON, UniqueConstraint, Index, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 import enum
 from app.core.database import Base
 
@@ -27,8 +28,12 @@ class BlockchainNetwork(str, enum.Enum):
     ETHEREUM = "ethereum"
     POLYGON = "polygon"
     BASE = "base"
+    BSC = "bsc"
+    ARBITRUM = "arbitrum"
+    AVALANCHE = "avalanche"
     TRON = "tron"
     SOLANA = "solana"
+    SOROBAN = "soroban"
 
 
 class TokenSymbol(str, enum.Enum):
@@ -157,7 +162,7 @@ class Token(Base):
     
     # Unique constraint: one token per chain
     __table_args__ = (
-        # UniqueConstraint('symbol', 'chain', name='uq_token_chain'),
+        UniqueConstraint('symbol', 'chain', name='uq_token_chain'),
     )
 
 
@@ -189,6 +194,8 @@ class Merchant(Base):
     
     webhook_url = Column(String, nullable=True)
     webhook_secret = Column(String, nullable=True)  # For webhook signature verification
+    webhook_secret_previous = Column(String, nullable=True)  # Previous secret for rotation grace period
+    webhook_secret_rotated_at = Column(DateTime, nullable=True)  # When the secret was last rotated
     is_active = Column(Boolean, default=True, nullable=False)
     
     # Default accepted tokens/chains (can be overridden per session)
@@ -238,7 +245,7 @@ class MerchantWallet(Base):
     
     # Unique constraint: one wallet per chain per merchant
     __table_args__ = (
-        # UniqueConstraint('merchant_id', 'chain', name='uq_merchant_chain'),
+        UniqueConstraint('merchant_id', 'chain', name='uq_merchant_chain'),
     )
 
 
@@ -364,6 +371,12 @@ class PaymentSession(Base):
     
     # Relationships
     merchant = relationship("Merchant", back_populates="payment_sessions")
+    
+    # Indexes for performance (fixes N+1 and slow dashboard queries)
+    __table_args__ = (
+        Index('idx_payment_merchant_status', 'merchant_id', 'status'),
+        Index('idx_payment_created_at', 'created_at'),
+    )
 
 
 # ============= ADMIN =============
@@ -390,6 +403,49 @@ class PaymentEvent(Base):
     tx_hash = Column(String, nullable=True)
     details = Column(JSON, nullable=True)  # Event-specific details
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ============= AUDIT LOG (Comprehensive Security Audit Trail) =============
+
+class AuditLog(Base):
+    """
+    Immutable audit trail for all sensitive operations.
+    Provides compliance and security monitoring.
+    """
+    __tablename__ = "audit_logs"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Actor information
+    actor_id = Column(UUID(as_uuid=True), nullable=True)  # Null for system/anonymous actions
+    actor_type = Column(String(50), nullable=False)  # merchant, admin, team_member, system, anonymous
+    
+    # Action details
+    action = Column(String(100), nullable=False)  # e.g., "refund_created", "payment_confirmed", "login_success"
+    resource_type = Column(String(50), nullable=True)  # e.g., "payment", "refund", "merchant"
+    resource_id = Column(String(100), nullable=True)  # ID of affected resource
+    
+    # Request context
+    ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
+    user_agent = Column(String(500), nullable=True)
+    request_id = Column(String(100), nullable=True)  # Correlation ID
+    
+    # Operation result
+    status = Column(String(20), nullable=False, default="success")  # success, failure, error
+    
+    # Additional context
+    details = Column(JSON, nullable=True)  # Flexible JSON for action-specific data
+    
+    # Timestamp (immutable)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Indexes for efficient querying
+    __table_args__ = (
+        Index('idx_audit_actor', 'actor_id', 'timestamp'),
+        Index('idx_audit_action', 'action', 'timestamp'),
+        Index('idx_audit_resource', 'resource_type', 'resource_id'),
+        Index('idx_audit_ip', 'ip_address', 'timestamp'),
+    )
 
 
 # ============= PAYMENT LINKS =============
@@ -712,6 +768,13 @@ class Refund(Base):
     # Relationships
     payment_session = relationship("PaymentSession")
     merchant = relationship("Merchant")
+    
+    # Indexes for performance (fixes N+1 and slow refund queries)
+    __table_args__ = (
+        Index('idx_refund_merchant_status', 'merchant_id', 'status'),
+        Index('idx_refund_payment_session', 'payment_session_id'),
+        Index('idx_refund_created_at', 'created_at'),
+    )
 
 
 # ============= MERCHANT TEAM =============
@@ -1051,14 +1114,24 @@ class APIKey(Base):
 # ============= PAYER INFO =============
 
 class PayerInfo(Base):
-    """Collected payer/customer data for a payment session"""
+    """Collected payer/customer data for a payment session.
+    
+    GDPR compliance: PII fields (email, name, phone) are stored encrypted
+    using Fernet encryption when PII_ENCRYPTION_KEY is configured.
+    Hybrid properties provide transparent encrypt/decrypt access.
+    """
     __tablename__ = "payer_info"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(String, ForeignKey("payment_sessions.id"), nullable=False, index=True)
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
 
-    # Contact
+    # Contact — encrypted PII fields (GDPR Article 32)
+    _email_encrypted = Column("email_encrypted", LargeBinary, nullable=True)
+    _name_encrypted = Column("name_encrypted", LargeBinary, nullable=True)
+    _phone_encrypted = Column("phone_encrypted", LargeBinary, nullable=True)
+    
+    # Legacy plaintext columns (kept for backward compat during migration)
     email = Column(String(255), nullable=True)
     name = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
@@ -1086,6 +1159,57 @@ class PayerInfo(Base):
     # Relationships
     payment_session = relationship("PaymentSession", backref="payer_info_rel")
     merchant = relationship("Merchant")
+    
+    # ── Encrypted PII hybrid properties ──
+    @hybrid_property
+    def email_secure(self):
+        """Read encrypted email, fallback to plaintext legacy column."""
+        if self._email_encrypted:
+            from app.core.encryption import decrypt_field
+            return decrypt_field(self._email_encrypted)
+        return self.email
+    
+    @email_secure.setter
+    def email_secure(self, value):
+        """Write to both encrypted and legacy columns."""
+        self.email = value  # Legacy compat
+        if value:
+            from app.core.encryption import encrypt_field
+            self._email_encrypted = encrypt_field(value)
+        else:
+            self._email_encrypted = None
+    
+    @hybrid_property
+    def name_secure(self):
+        if self._name_encrypted:
+            from app.core.encryption import decrypt_field
+            return decrypt_field(self._name_encrypted)
+        return self.name
+    
+    @name_secure.setter
+    def name_secure(self, value):
+        self.name = value
+        if value:
+            from app.core.encryption import encrypt_field
+            self._name_encrypted = encrypt_field(value)
+        else:
+            self._name_encrypted = None
+    
+    @hybrid_property
+    def phone_secure(self):
+        if self._phone_encrypted:
+            from app.core.encryption import decrypt_field
+            return decrypt_field(self._phone_encrypted)
+        return self.phone
+    
+    @phone_secure.setter
+    def phone_secure(self, value):
+        self.phone = value
+        if value:
+            from app.core.encryption import encrypt_field
+            self._phone_encrypted = encrypt_field(value)
+        else:
+            self._phone_encrypted = None
 
 
 # ============= PROMO CODES =============

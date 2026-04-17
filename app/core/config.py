@@ -1,6 +1,26 @@
 from pydantic_settings import BaseSettings
-from pydantic import model_validator
+from pydantic import model_validator, Field
 from typing import List, Optional
+import logging
+
+_config_logger = logging.getLogger(__name__)
+
+# Known weak/default secrets that MUST be changed
+_WEAK_JWT_SECRETS = {
+    "your-secret-key-change-this-in-production-minimum-32-characters-long",
+    "change-me",
+    "secret",
+    "jwt-secret",
+    "your-secret-key",
+}
+
+_WEAK_ADMIN_PASSWORDS = {
+    "change-this-password",
+    "change-this-password-immediately",
+    "admin",
+    "password",
+    "admin123",
+}
 
 
 class Settings(BaseSettings):
@@ -20,12 +40,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./payment_gateway.db"
     
     # JWT
-    JWT_SECRET: str
+    JWT_SECRET: str = Field(..., min_length=32)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
     # API Keys
     API_KEY_SECRET: str = "your-api-key-secret-change-in-production"
+    
+    # PII Encryption (GDPR compliance — Fernet key, 32+ chars)
+    PII_ENCRYPTION_KEY: str = ""
     
     # Payment Settings
     PAYMENT_EXPIRY_MINUTES: int = 15  # Payment timeout from when user starts (opens checkout page)
@@ -175,6 +198,28 @@ class Settings(BaseSettings):
     ARBITRUM_USDC_ADDRESS: str = ""
     ARBITRUM_USDT_ADDRESS: str = ""
     
+    # ============= AVALANCHE C-CHAIN =============
+    AVALANCHE_ENABLED: bool = True
+    AVALANCHE_CONFIRMATIONS: int = 12
+    
+    # Testnet (Fuji)
+    AVALANCHE_TESTNET_RPC_URL: str = "https://api.avax-test.network/ext/bc/C/rpc"
+    AVALANCHE_TESTNET_CHAIN_ID: int = 43113
+    AVALANCHE_TESTNET_USDC_ADDRESS: str = "0x5425890298aed601595a70AB815c96711a31Bc65"
+    AVALANCHE_TESTNET_USDT_ADDRESS: str = "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732"
+    
+    # Mainnet
+    AVALANCHE_MAINNET_RPC_URL: str = "https://api.avax.network/ext/bc/C/rpc"
+    AVALANCHE_MAINNET_CHAIN_ID: int = 43114
+    AVALANCHE_MAINNET_USDC_ADDRESS: str = "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+    AVALANCHE_MAINNET_USDT_ADDRESS: str = "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"
+    
+    # Active (resolved by model_validator)
+    AVALANCHE_RPC_URL: str = ""
+    AVALANCHE_CHAIN_ID: int = 0
+    AVALANCHE_USDC_ADDRESS: str = ""
+    AVALANCHE_USDT_ADDRESS: str = ""
+    
     # ============= TRON NETWORK =============
     TRON_ENABLED: bool = True
     TRON_API_KEY: Optional[str] = None
@@ -265,6 +310,7 @@ class Settings(BaseSettings):
     SUBSCRIPTION_CONTRACT_BASE: str = ""
     SUBSCRIPTION_CONTRACT_BSC: str = ""
     SUBSCRIPTION_CONTRACT_ARBITRUM: str = ""
+    SUBSCRIPTION_CONTRACT_AVALANCHE: str = ""
     
     # Tron Subscription Relayer
     TRON_RELAYER_PRIVATE_KEY: str = ""
@@ -358,6 +404,12 @@ class Settings(BaseSettings):
         self.ARBITRUM_USDC_ADDRESS = getattr(self, f"ARBITRUM_{net}_USDC_ADDRESS")
         self.ARBITRUM_USDT_ADDRESS = getattr(self, f"ARBITRUM_{net}_USDT_ADDRESS")
         
+        # Avalanche
+        self.AVALANCHE_RPC_URL = getattr(self, f"AVALANCHE_{net}_RPC_URL")
+        self.AVALANCHE_CHAIN_ID = getattr(self, f"AVALANCHE_{net}_CHAIN_ID")
+        self.AVALANCHE_USDC_ADDRESS = getattr(self, f"AVALANCHE_{net}_USDC_ADDRESS")
+        self.AVALANCHE_USDT_ADDRESS = getattr(self, f"AVALANCHE_{net}_USDT_ADDRESS")
+        
         # Tron
         self.TRON_API_URL = getattr(self, f"TRON_{net}_API_URL")
         self.TRON_USDT_ADDRESS = getattr(self, f"TRON_{net}_USDT_ADDRESS")
@@ -367,6 +419,58 @@ class Settings(BaseSettings):
         self.SOLANA_RPC_URL = getattr(self, f"SOLANA_{net}_RPC_URL")
         self.SOLANA_USDC_MINT = getattr(self, f"SOLANA_{net}_USDC_MINT")
         self.SOLANA_USDT_MINT = getattr(self, f"SOLANA_{net}_USDT_MINT")
+        
+        return self
+    
+    @model_validator(mode="after")
+    def validate_security_settings(self):
+        """Validate security-critical settings. Blocks dangerous defaults in production."""
+        is_prod = self.ENVIRONMENT == "production"
+        
+        # ── JWT Secret: reject known weak defaults ──
+        if self.JWT_SECRET.lower() in _WEAK_JWT_SECRETS:
+            if is_prod:
+                raise ValueError(
+                    "CRITICAL: JWT_SECRET must be changed from default value! "
+                    "Generate one with: openssl rand -hex 32"
+                )
+            _config_logger.warning(
+                "⚠️  JWT_SECRET is set to a weak default. "
+                "Change it before deploying to production!"
+            )
+        
+        # ── CORS: reject wildcard in production ──
+        if is_prod and "*" in self.CORS_ORIGINS:
+            raise ValueError(
+                "CRITICAL: CORS_ORIGINS='*' is not allowed in production! "
+                "Set specific allowed origins."
+            )
+        
+        # ── Admin password: reject defaults in production ──
+        if self.ADMIN_PASSWORD.lower() in _WEAK_ADMIN_PASSWORDS:
+            if is_prod:
+                raise ValueError(
+                    "CRITICAL: ADMIN_PASSWORD must be changed from default! "
+                    "Use a strong password (12+ chars, mixed case, digits, symbols)."
+                )
+            _config_logger.warning(
+                "⚠️  ADMIN_PASSWORD is set to a weak default. "
+                "Change it before deploying to production!"
+            )
+        
+        # ── Redis: warn if disabled in production ──
+        if is_prod and not self.REDIS_ENABLED:
+            _config_logger.warning(
+                "⚠️  REDIS_ENABLED=false in production. In-memory caches "
+                "won't be shared across workers. Enable Redis for production."
+            )
+        
+        # ── PII Encryption Key: warn if empty ──
+        if not self.PII_ENCRYPTION_KEY:
+            _config_logger.warning(
+                "⚠️  PII_ENCRYPTION_KEY is not set. PII fields will be stored "
+                "in plaintext. Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
+            )
         
         return self
     

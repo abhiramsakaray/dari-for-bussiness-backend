@@ -39,6 +39,8 @@ from app.routes import (
     team_auth,
     permissions as permissions_routes,
     activity_logs,
+    # GDPR Compliance
+    gdpr, consent,
 )
 
 # Configure logging
@@ -57,19 +59,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS - Allow frontend development servers and e-commerce integrations
+# Configure CORS - Use origins from config (not hardcoded)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "http://localhost:4200",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:4200",
-    ],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,6 +70,20 @@ app.add_middleware(
 
 # Security middleware — rate limiting + OWASP headers
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+# Request body size limit — 10MB max (DoS prevention)
+@app.middleware("http")
+async def limit_request_body_size(request: Request, call_next):
+    """Reject requests with excessively large bodies."""
+    MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large. Maximum size is 10MB."}
+        )
+    return await call_next(request)
 
 # Merchant currency middleware — inject currency preferences into request context
 app.add_middleware(MerchantCurrencyMiddleware)
@@ -111,13 +118,13 @@ async def log_requests(request: Request, call_next):
 # Exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Handle uncaught exceptions."""
+    """Handle uncaught exceptions. Never expose internal details."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={
             "detail": "Internal server error",
-            "message": str(exc) if settings.STELLAR_NETWORK == "testnet" else "An error occurred"
+            "message": "An unexpected error occurred. Please try again later."
         }
     )
 
@@ -173,6 +180,10 @@ app.include_router(permissions_routes.router_v1)  # Permission management (/api/
 app.include_router(activity_logs.router)  # Activity audit logs (legacy /team prefix)
 app.include_router(activity_logs.router_v1)  # Activity audit logs (/api/v1/team prefix)
 
+# GDPR Compliance routes
+app.include_router(gdpr.router)  # GDPR data deletion and export
+app.include_router(consent.router)  # Consent management
+
 # Serve static files (Dari Payment button SDK and demo)
 public_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "public")
 if os.path.exists(public_dir):
@@ -198,12 +209,42 @@ async def root():
 # Health check
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
+    """Health check endpoint with dependency verification."""
+    from app.core.database import SessionLocal
+    
+    checks = {
+        "database": False,
         "version": "2.2.0",
-        "network": settings.STELLAR_NETWORK
+        "network": settings.STELLAR_NETWORK,
     }
+    
+    # Check database connectivity
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1" if "sqlite" not in settings.DATABASE_URL else "SELECT 1")
+        checks["database"] = True
+        db.close()
+    except Exception as e:
+        logger.error(f"Health check DB failure: {e}")
+        checks["database"] = False
+    
+    # Check Redis if enabled
+    if settings.REDIS_ENABLED:
+        try:
+            from app.core.cache import cache
+            checks["redis"] = cache.is_available() if hasattr(cache, 'is_available') else True
+        except Exception:
+            checks["redis"] = False
+    
+    all_healthy = checks["database"]
+    
+    if not all_healthy:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "checks": checks}
+        )
+    
+    return {"status": "healthy", "checks": checks}
 
 
 # Prometheus metrics endpoint
@@ -245,9 +286,9 @@ async def startup_event():
                 )
                 db.add(admin)
                 db.commit()
-                logger.info(f"✅ Admin account created: {settings.ADMIN_EMAIL}")
+                logger.info("✅ Admin account created")
             else:
-                logger.info(f"ℹ️  Admin account exists: {settings.ADMIN_EMAIL}")
+                logger.info("ℹ️  Admin account exists")
         except Exception as e:
             logger.error(f"Admin account creation error: {e}")
             db.rollback()

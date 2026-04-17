@@ -1,4 +1,4 @@
-﻿"""
+"""
 Refunds API Routes
 Process refunds for completed payments
 
@@ -9,19 +9,20 @@ Handles:
 - Queued refunds when merchant has insufficient funds
 - Force refund via external wallet when platform balance is low
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, update
 import secrets
 import uuid
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Optional, List
 import asyncio
 
 from app.core.database import get_db
 from app.core.security import require_merchant, require_replay_protection
+from app.core.audit_logger import AuditLogger
 from app.models.models import (
     Merchant, Refund, PaymentSession, PaymentStatus, Withdrawal,
     RefundStatus as DBRefundStatus, Subscription, SubscriptionPayment
@@ -392,6 +393,7 @@ async def check_refund_eligibility(
 @router.post("", response_model=RefundResponse)
 async def create_refund(
     refund_data: RefundCreate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_merchant),
@@ -428,6 +430,14 @@ async def create_refund(
     ).first()
     
     if not payment:
+        # Audit log: Failed refund attempt
+        AuditLogger.log_from_request(
+            db, request, current_user,
+            action="refund_create_failed",
+            resource_type="refund",
+            details={"reason": "payment_not_found", "payment_id": refund_data.payment_session_id},
+            status="failure"
+        )
         raise HTTPException(status_code=404, detail="Payment not found")
     
     # Verify payment was successful
@@ -559,12 +569,28 @@ async def create_refund(
         else:
             payment.status = PaymentStatus.PARTIALLY_REFUNDED
         
-        # Deduct from merchant balance if using platform balance
-        if refund_source == "platform_balance" and available_balance >= refund_amount:
+        # Atomic balance deduction using SQL UPDATE with WHERE guard
+        # This prevents race conditions: the UPDATE only succeeds if
+        # balance >= refund_amount at the moment of execution.
+        if refund_source == "platform_balance":
             col = BALANCE_COLUMNS.get(token.upper())
             if col:
-                current_bal = Decimal(str(getattr(merchant, col, 0) or 0))
-                setattr(merchant, col, current_bal - refund_amount)
+                balance_column = getattr(Merchant, col)
+                result = db.execute(
+                    update(Merchant)
+                    .where(
+                        Merchant.id == merchant_uuid,
+                        balance_column >= refund_amount,
+                    )
+                    .values(**{col: balance_column - refund_amount})
+                )
+                if result.rowcount == 0:
+                    # Another concurrent request drained the balance
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Insufficient funds (concurrent modification detected). Please retry."
+                    )
     
     db.commit()
     db.refresh(refund)
@@ -572,6 +598,24 @@ async def create_refund(
     # Process refund in background (send crypto on-chain)
     if refund_status != DBRefundStatus.QUEUED:
         background_tasks.add_task(process_refund, refund.id, str(merchant_uuid))
+    
+    # Audit log: Refund created
+    AuditLogger.log_from_request(
+        db, request, current_user,
+        action="refund_created",
+        resource_type="refund",
+        resource_id=refund.id,
+        details={
+            "payment_session_id": payment.id,
+            "amount": str(refund_amount),
+            "token": token,
+            "chain": payment.chain,
+            "status": refund_status.value,
+            "refund_source": refund_source,
+            "queued": refund_status == DBRefundStatus.QUEUED
+        },
+        status="success"
+    )
     
     return build_refund_response(refund)
 
@@ -591,11 +635,19 @@ async def list_refunds(
     Supports filtering by status and payment session.
     """
     try:
+        from sqlalchemy.orm import joinedload
+        
         merchant_uuid = uuid.UUID(current_user["id"])
         logger.info(f"Fetching refunds for merchant {merchant_uuid}, page={page}, page_size={page_size}, status={refund_status}")
         
         # Filter by merchant_id for security
         query = db.query(Refund).filter(Refund.merchant_id == merchant_uuid)
+        
+        # Eager load relationships to prevent N+1 queries
+        query = query.options(
+            joinedload(Refund.payment_session),
+            joinedload(Refund.merchant)
+        )
         
         if refund_status:
             query = query.filter(Refund.status == refund_status.value)
@@ -751,11 +803,27 @@ async def retry_refund(
                 detail=f"Still insufficient balance. Available: {available} {refund.token}, Needed: {refund.amount} {refund.token}"
             )
         
-        # Deduct balance
+        # Atomic balance deduction using SQL UPDATE with WHERE guard
+        # This prevents race conditions: the UPDATE only succeeds if
+        # balance >= refund_amount at the moment of execution.
         col = BALANCE_COLUMNS.get(refund.token.upper())
         if col:
-            current_bal = Decimal(str(getattr(merchant, col, 0) or 0))
-            setattr(merchant, col, current_bal - Decimal(str(refund.amount)))
+            balance_column = getattr(Merchant, col)
+            result = db.execute(
+                update(Merchant)
+                .where(
+                    Merchant.id == merchant_uuid,
+                    balance_column >= Decimal(str(refund.amount))
+                )
+                .values(**{col: balance_column - Decimal(str(refund.amount))})
+            )
+            if result.rowcount == 0:
+                # Another concurrent request drained the balance
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail="Insufficient funds (concurrent modification detected). Please retry."
+                )
     
     refund.status = DBRefundStatus.PENDING
     refund.failure_reason = None
@@ -961,11 +1029,25 @@ async def process_queued_refunds(
             refund.status = DBRefundStatus.PENDING
             refund.failure_reason = None
             
-            # Deduct from balance
+            # Atomic balance deduction using SQL UPDATE with WHERE guard
             col = BALANCE_COLUMNS.get(token.upper())
             if col:
-                current_bal = Decimal(str(getattr(merchant, col, 0) or 0))
-                setattr(merchant, col, current_bal - Decimal(str(refund.amount)))
+                balance_column = getattr(Merchant, col)
+                result = db.execute(
+                    update(Merchant)
+                    .where(
+                        Merchant.id == merchant_uuid,
+                        balance_column >= Decimal(str(refund.amount))
+                    )
+                    .values(**{col: balance_column - Decimal(str(refund.amount))})
+                )
+                if result.rowcount == 0:
+                    # Concurrent modification detected
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Insufficient funds (concurrent modification). Please retry."
+                    )
             
             # Update payment status
             payment = db.query(PaymentSession).filter(

@@ -132,11 +132,15 @@ def verify_webhook_signature(
     signature_header: str,
     secret: str,
     tolerance_seconds: int = 300,
+    previous_secret: Optional[str] = None,
 ) -> bool:
     """
     Verify an incoming webhook signature.
 
     Merchants use this to verify webhooks are authentic.
+
+    During the 24-hour grace period after secret rotation, this function
+    tries the current secret first, then falls back to the previous secret.
 
     Parameters
     ----------
@@ -145,38 +149,52 @@ def verify_webhook_signature(
     signature_header : str
         Value of ``X-Payment-Signature`` header (``t=...,v1=...``).
     secret : str
-        The merchant's webhook secret.
+        The merchant's current webhook secret.
     tolerance_seconds : int
         Max age of the signature (replay protection).
+    previous_secret : str, optional
+        The previous webhook secret (for rotation grace period).
 
     Returns
     -------
     bool
-        True if signature is valid.
+        True if signature is valid with either current or previous secret.
     """
-    try:
-        parts = dict(p.split("=", 1) for p in signature_header.split(","))
-        timestamp = parts.get("t", "")
-        expected_sig = parts.get("v1", "")
+    def _verify_with_secret(sec: str) -> bool:
+        try:
+            parts = dict(p.split("=", 1) for p in signature_header.split(","))
+            timestamp = parts.get("t", "")
+            expected_sig = parts.get("v1", "")
 
-        if not timestamp or not expected_sig:
+            if not timestamp or not expected_sig:
+                return False
+
+            # Replay protection
+            ts = int(timestamp)
+            if abs(time.time() - ts) > tolerance_seconds:
+                return False
+
+            signed_payload = f"{timestamp}.".encode() + payload_body
+            computed = hmac.new(
+                sec.encode(),
+                signed_payload,
+                hashlib.sha256,
+            ).hexdigest()
+
+            return hmac.compare_digest(computed, expected_sig)
+        except Exception:
             return False
 
-        # Replay protection
-        ts = int(timestamp)
-        if abs(time.time() - ts) > tolerance_seconds:
-            return False
-
-        signed_payload = f"{timestamp}.".encode() + payload_body
-        computed = hmac.new(
-            secret.encode(),
-            signed_payload,
-            hashlib.sha256,
-        ).hexdigest()
-
-        return hmac.compare_digest(computed, expected_sig)
-    except Exception:
-        return False
+    # Try current secret first
+    if _verify_with_secret(secret):
+        return True
+    
+    # Fall back to previous secret (rotation grace period)
+    if previous_secret and _verify_with_secret(previous_secret):
+        logger.info("Webhook verified with previous secret (rotation grace period)")
+        return True
+    
+    return False
 
 
 async def send_refund_webhook(refund: Refund, db: Session, retry_count: int = 0):

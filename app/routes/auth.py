@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 import secrets
 import httpx
 import logging
+import re
 from app.core import get_db, hash_password, verify_password, create_access_token, settings
+from app.core.rate_limiter import rate_limit
 from app.models import Merchant, Admin
 from app.schemas import (
     MerchantRegister, MerchantLogin, TokenResponse,
@@ -14,14 +16,39 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
 
+# ── Password Policy ──
+_PASSWORD_MIN_LENGTH = 12
+
+def validate_password(password: str) -> None:
+    """Enforce strong password policy. Raises HTTPException on failure."""
+    errors = []
+    if len(password) < _PASSWORD_MIN_LENGTH:
+        errors.append(f"Password must be at least {_PASSWORD_MIN_LENGTH} characters")
+    if not re.search(r'[A-Z]', password):
+        errors.append("Password must contain at least one uppercase letter")
+    if not re.search(r'[a-z]', password):
+        errors.append("Password must contain at least one lowercase letter")
+    if not re.search(r'[0-9]', password):
+        errors.append("Password must contain at least one digit")
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':",.<>?/\\|`~]', password):
+        errors.append("Password must contain at least one special character")
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password does not meet security requirements: " + "; ".join(errors)
+        )
+
+
 def generate_api_key() -> str:
     """Generate a secure API key for merchant."""
     return f"pk_live_{secrets.token_urlsafe(32)}"
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@rate_limit(max_requests=3, window_seconds=300, key_prefix="auth_register")
 async def register_merchant(
     merchant_data: MerchantRegister,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Register a new merchant."""
@@ -32,6 +59,9 @@ async def register_merchant(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
+    
+    # Enforce password policy
+    validate_password(merchant_data.password)
     
     # Create new merchant with API key
     new_merchant = Merchant(
@@ -63,8 +93,10 @@ async def register_merchant(
 
 
 @router.post("/login", response_model=TokenResponse)
+@rate_limit(max_requests=5, window_seconds=60, key_prefix="auth_login")
 async def login_merchant(
     credentials: MerchantLogin,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Login as a merchant or admin."""
@@ -74,8 +106,10 @@ async def login_merchant(
         clear_login_attempts,
     )
 
-    # Brute-force protection
+    # Brute-force protection: per-email AND per-IP
     check_account_lockout(credentials.email)
+    client_ip = request.client.host if request.client else "unknown"
+    check_account_lockout(f"ip:{client_ip}")
 
     # First check if it's an admin
     admin = db.query(Admin).filter(Admin.email == credentials.email).first()
@@ -95,6 +129,7 @@ async def login_merchant(
     
     if not merchant or not verify_password(credentials.password, merchant.password_hash):
         record_failed_login(credentials.email)
+        record_failed_login(f"ip:{client_ip}")  # Also track IP
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -131,8 +166,10 @@ async def login_merchant(
 # ============= GOOGLE OAUTH =============
 
 @router.post("/google", response_model=GoogleAuthResponse)
+@rate_limit(max_requests=10, window_seconds=60, key_prefix="auth_google")
 async def google_auth(
     auth_data: GoogleAuthRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
@@ -255,12 +292,10 @@ async def _verify_google_token(token: str) -> dict | None:
             
             if resp.status_code == 200:
                 data = resp.json()
-                # Optionally validate client_id
+                # Validate client_id (audience check)
                 if settings.GOOGLE_CLIENT_ID and data.get("aud") != settings.GOOGLE_CLIENT_ID:
                     logger.warning(f"Google token audience mismatch: {data.get('aud')}")
-                    # Still allow in development
-                    if settings.ENVIRONMENT != "development":
-                        return None
+                    return None  # Always enforce audience validation
                 return data
             
             # Try as access token (userinfo endpoint)

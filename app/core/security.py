@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
+import uuid as uuid_module
 from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
@@ -58,18 +59,31 @@ def decode_access_token(token: str) -> dict:
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """Get current authenticated user from JWT token."""
     token = credentials.credentials
-    print(f"[AUTH DEBUG] Token received: {token[:20]}...")
     payload = decode_access_token(token)
     
     user_id = payload.get("sub")
     role = payload.get("role")
     
-    print(f"[AUTH DEBUG] Decoded JWT - user_id: {user_id}, role: {role}")
-    
     if user_id is None or role is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
+        )
+    
+    # Validate that the sub claim is a valid UUID (prevents injection)
+    try:
+        uuid_module.UUID(user_id, version=4)
+    except (ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: malformed user identifier",
+        )
+    
+    # Validate role is an expected value
+    if role not in ("merchant", "admin", "team_member"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: unknown role",
         )
     
     return {"id": user_id, "role": role}
@@ -78,13 +92,11 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 def require_role(required_role: str):
     """Dependency to require a specific role."""
     def role_checker(current_user: dict = Depends(get_current_user)):
-        # Temporarily disabled role checking - accept any authenticated user
-        print(f"[AUTH DEBUG] require_role({required_role}) called. User: {current_user}")
-        # if current_user["role"] != required_role:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail=f"Access forbidden: {required_role} role required",
-        #     )
+        if current_user["role"] != required_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: {required_role} role required",
+            )
         return current_user
     return role_checker
 

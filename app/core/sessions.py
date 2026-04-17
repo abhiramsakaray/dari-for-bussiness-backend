@@ -20,20 +20,43 @@ async def create_session(
     team_member_id: str,
     token: str,
     request: Request,
-    db: Session
+    db: Session,
+    regenerate_on_auth: bool = True
 ) -> str:
     """
-    Create a new session for team member
+    Create a new session for team member.
+    
+    Session Fixation Protection:
+    - Invalidates any existing sessions for this team member
+    - Generates new session ID after authentication
+    - Prevents session hijacking attacks
     
     Args:
         team_member_id: Team member UUID
         token: JWT access token
         request: FastAPI request object
         db: Database session
+        regenerate_on_auth: If True, invalidates old sessions (default: True)
         
     Returns:
         Session ID
     """
+    # Session fixation protection: Invalidate old sessions on new login
+    if regenerate_on_auth:
+        old_sessions = db.query(TeamMemberSession).filter(
+            and_(
+                TeamMemberSession.team_member_id == uuid.UUID(team_member_id),
+                TeamMemberSession.revoked_at.is_(None)
+            )
+        ).all()
+        
+        for old_session in old_sessions:
+            old_session.revoked_at = datetime.utcnow()
+            old_session.revocation_reason = "Session regenerated on authentication"
+        
+        if old_sessions:
+            db.commit()
+    
     # Hash token for storage
     token_hash_value = hash_token(token)
     
@@ -41,7 +64,7 @@ async def create_session(
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     
-    # Create session
+    # Create NEW session with NEW ID
     session = TeamMemberSession(
         team_member_id=uuid.UUID(team_member_id),
         token_hash=token_hash_value,

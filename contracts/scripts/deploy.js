@@ -111,6 +111,16 @@ function getTokenAddresses(chainId) {
             USDC: "0x64544969ed7EBf5f083679233325356EbE738930",
             USDT: "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd",
         },
+        // Avalanche C-Chain Mainnet
+        43114: {
+            USDC: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+            USDT: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7",
+        },
+        // Avalanche Fuji Testnet
+        43113: {
+            USDC: "0x5425890298aed601595a70AB815c96711a31Bc65",
+            USDT: "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+        },
         // Hardhat
         31337: {},
     };
@@ -129,6 +139,8 @@ function getChainEnvName(chainId) {
         421614: "ARBITRUM",
         56: "BSC",
         97: "BSC",
+        43114: "AVALANCHE",
+        43113: "AVALANCHE",
         31337: "LOCAL",
     };
     return names[chainId] || "UNKNOWN";

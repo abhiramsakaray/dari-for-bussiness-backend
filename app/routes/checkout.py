@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from app.core import get_db
 from app.core.config import settings
 from app.core.cache import cache, make_cache_key
+from app.core.security import require_merchant
 from app.models import PaymentSession, PaymentStatus, MerchantWallet
 from app.models.models import PayerInfo
 from app.schemas import PaymentSessionDetail
@@ -16,13 +17,14 @@ from app.services.payment_tokenization import (
 )
 from app.services.currency_service import get_currency_for_country, convert_usdc_to_local
 from app.core.security_middleware import compute_risk_score
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from stellar_sdk import Keypair
 import qrcode
 import io
 import base64
 import json
 import logging
+import uuid
 
 router = APIRouter(prefix="/checkout", tags=["Checkout"])
 templates = Jinja2Templates(directory="app/templates")
@@ -324,7 +326,9 @@ async def checkout_page(
         if current_chain in ['ethereum', 'polygon', 'base'] and token_contract and chain_id:
             # EIP-681 Format: ethereum:<contract_address>@<chain_id>/transfer?address=<recipient_address>&uint256=<amount>
             # Amount in atomic units (wei)
-            amount_wei = int(Decimal(str(amount_token_val)) * (10 ** decimals))
+            amount_wei = int((Decimal(str(amount_token_val)) * (10 ** decimals)).quantize(
+                Decimal('1'), rounding=ROUND_DOWN
+            ))
             qr_data = f"ethereum:{token_contract}@{chain_id}/transfer?address={payment_address}&uint256={amount_wei}"
             logger.info(f"Generated EIP-681 QR: {qr_data}")
 
@@ -464,7 +468,9 @@ async def refresh_qr_after_coupon(
             chain_id = chain_id_map.get(current_chain)
             token_contract = token_contract_map.get((current_chain, current_token))
             if token_contract and chain_id:
-                amount_wei = int(Decimal(str(new_token)) * (10 ** decimals))
+                amount_wei = int((Decimal(str(new_token)) * (10 ** decimals)).quantize(
+                    Decimal('1'), rounding=ROUND_DOWN
+                ))
                 qr_data = f"ethereum:{token_contract}@{chain_id}/transfer?address={payment_address}&uint256={amount_wei}"
     except Exception:
         qr_data = payment_address
@@ -489,10 +495,19 @@ async def refresh_qr_after_coupon(
 @router.get("/api/{session_id}", response_model=PaymentSessionDetail)
 async def get_checkout_details(
     session_id: str,
+    current_user: dict = Depends(require_merchant),  # ADD AUTH - only merchant can view via API
     db: Session = Depends(get_db)
 ):
-    """Get checkout details as JSON (for frontend integration)."""
-    session = db.query(PaymentSession).filter(PaymentSession.id == session_id).first()
+    """
+    Get checkout details as JSON (for merchant/admin integration).
+    Requires authentication - merchants can only view their own sessions.
+    """
+    merchant_uuid = uuid.UUID(current_user["id"])
+    
+    session = db.query(PaymentSession).filter(
+        PaymentSession.id == session_id,
+        PaymentSession.merchant_id == merchant_uuid  # VERIFY OWNERSHIP
+    ).first()
     
     if not session:
         raise HTTPException(
