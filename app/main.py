@@ -59,17 +59,20 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Security middleware — rate limiting + OWASP headers
+# NOTE: Added BEFORE CORSMiddleware so CORS wraps it (last-added = outermost in Starlette)
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Configure CORS - Use origins from config (not hardcoded)
+# MUST be added LAST so it's the outermost middleware and handles preflight/headers on ALL responses
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
-
-# Security middleware — rate limiting + OWASP headers
-app.add_middleware(SecurityHeadersMiddleware)
 
 
 # Request body size limit — 10MB max (DoS prevention)
