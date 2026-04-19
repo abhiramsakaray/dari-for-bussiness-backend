@@ -55,12 +55,12 @@ class InvoiceStatus(str, enum.Enum):
 
 class SubscriptionStatus(str, enum.Enum):
     """Subscription status"""
-    ACTIVE = "ACTIVE"
-    PENDING_PAYMENT = "PENDING_PAYMENT"
-    PAUSED = "PAUSED"
-    CANCELLED = "CANCELLED"
-    PAST_DUE = "PAST_DUE"
-    TRIALING = "TRIALING"
+    ACTIVE = "active"
+    PENDING_PAYMENT = "pending_payment"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+    PAST_DUE = "past_due"
+    TRIALING = "trialing"
 
 
 class SubscriptionInterval(str, enum.Enum):
