@@ -16,6 +16,19 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
 
+# Add OPTIONS handler for CORS preflight
+@router.options("/register")
+async def register_options():
+    """Handle CORS preflight for register endpoint"""
+    return {"message": "OK"}
+
+
+@router.options("/login")
+async def login_options():
+    """Handle CORS preflight for login endpoint"""
+    return {"message": "OK"}
+
+
 # ── Password Policy ──
 _PASSWORD_MIN_LENGTH = 12
 
@@ -90,6 +103,17 @@ async def register_merchant(
         onboarding_completed=False,
         onboarding_step=0,
     )
+
+
+@router.get("/register")
+async def register_get_not_allowed():
+    """Return helpful error for GET requests to register endpoint"""
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Registration requires POST method. Please send a POST request with email, name, and password in the request body.",
+        headers={"Allow": "POST, OPTIONS"}
+    )
+
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -41,11 +41,11 @@ web3==7.6.0
 eth-account==0.13.4
 eth-utils==5.1.0
 
-# Tron (optional)
-# tronpy==0.4.0
+# Tron
+tronpy==0.4.0
 
-# Solana (optional)
-# solders==0.21.0
+# Solana
+solders==0.21.0
 
 # ============================================================
 # HTTP & API CLIENTS

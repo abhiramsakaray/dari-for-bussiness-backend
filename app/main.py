@@ -211,6 +211,7 @@ async def root():
 async def health_check():
     """Health check endpoint with dependency verification."""
     from app.core.database import SessionLocal
+    from sqlalchemy import text
     
     checks = {
         "database": False,
@@ -221,7 +222,7 @@ async def health_check():
     # Check database connectivity
     try:
         db = SessionLocal()
-        db.execute("SELECT 1" if "sqlite" not in settings.DATABASE_URL else "SELECT 1")
+        db.execute(text("SELECT 1"))
         checks["database"] = True
         db.close()
     except Exception as e:

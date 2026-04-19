@@ -4,6 +4,7 @@ Prevents brute-force attacks and API abuse
 """
 import time
 import logging
+import functools
 from typing import Dict, Tuple
 from fastapi import Request, HTTPException, status
 from collections import defaultdict
@@ -128,6 +129,7 @@ def rate_limit(
             ...
     """
     def decorator(func):
+        @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             # Extract request from kwargs
             request = kwargs.get("request")

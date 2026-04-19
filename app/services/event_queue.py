@@ -38,6 +38,8 @@ class EventTypes:
     SUBSCRIPTION_PLAN_VIEWED = "subscription.plan_viewed"
     SUBSCRIPTION_PLAN_SELECTED = "subscription.plan_selected"
     SUBSCRIPTION_APPROVED = "subscription.approved"
+    SUBSCRIPTION_AUTHORIZATION_COMPLETED = "subscription.authorization_completed"
+    SUBSCRIPTION_AUTHORIZATION_REJECTED = "subscription.authorization_rejected"
     SUBSCRIPTION_ACTIVATED = "subscription.activated"
     SUBSCRIPTION_RENEWED = "subscription.renewed"
     SUBSCRIPTION_PAUSED = "subscription.paused"

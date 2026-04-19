@@ -1,4 +1,4 @@
-﻿"""
+"""
 Subscription Checkout Routes
 
 Public-facing routes for customers to subscribe to merchant plans.
@@ -94,6 +94,20 @@ def _build_manage_url(base_url: str, subscription_id: str, email: str) -> str:
     return f"{base_url}/subscribe/manage/{subscription_id}?email={email}"
 
 
+def _normalize_chains(raw_chains) -> list[str]:
+    """Normalize accepted chain values from plan metadata."""
+    if not raw_chains:
+        return ["stellar"]
+
+    normalized = []
+    for chain in raw_chains:
+        cval = (chain.value if hasattr(chain, "value") else str(chain)).strip().lower()
+        if cval:
+            normalized.append(cval)
+
+    return normalized or ["stellar"]
+
+
 # ─────────────────────────────────────────────
 # Public subscribe page (no auth required)
 # ─────────────────────────────────────────────
@@ -167,6 +181,24 @@ async def subscribe_page(
         btn_text = f"Start {plan.trial_days}-day free trial"
     else:
         btn_text = f"Subscribe &ndash; {sym}{plan.amount:.2f}/{interval_label}"
+
+    accepted_chains = _normalize_chains(plan.accepted_chains)
+    selected_chain = accepted_chains[0]
+    chain_names = {
+        "stellar": "Stellar",
+        "ethereum": "Ethereum",
+        "polygon": "Polygon",
+        "base": "Base",
+        "tron": "Tron",
+        "solana": "Solana",
+        "avalanche": "Avalanche",
+        "bsc": "BSC",
+        "arbitrum": "Arbitrum",
+    }
+    chain_options_html = "".join(
+        f'<option value="{c}"{(" selected" if c == selected_chain else "")}>{chain_names.get(c, c.title())}</option>'
+        for c in accepted_chains
+    )
 
     page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -291,6 +323,12 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,san
           <label class="pf-label">Full name (optional)</label>
           <input type="text" class="pf-input" id="name" placeholder="Jane Doe">
         </div>
+                <div class="pf-group">
+                    <label class="pf-label">Network</label>
+                    <select class="pf-input" id="chain">
+                        {chain_options_html}
+                    </select>
+                </div>
         <button class="sub-btn" type="submit" id="submitBtn">
           {btn_text}
         </button>
@@ -318,6 +356,7 @@ async function handleSubscribe(e) {{
       body: JSON.stringify({{
         email: document.getElementById('email').value,
                 name: document.getElementById('name').value || null,
+                chain: document.getElementById('chain').value || null,
                 source: document.getElementById('source').value || null,
                 customer_id: document.getElementById('customer_id').value || null,
                 return_url: document.getElementById('return_url').value || null,
@@ -383,12 +422,22 @@ async def subscribe_to_plan(
     return_url = body.get("return_url")
     success_url = body.get("success_url")
     cancel_url = body.get("cancel_url")
+    selected_chain = (body.get("chain") or "").strip().lower()
 
     plan = db.query(SubscriptionPlan).filter(
         and_(SubscriptionPlan.id == plan_id, SubscriptionPlan.is_active == True)
     ).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found or inactive")
+
+    accepted_chains = _normalize_chains(plan.accepted_chains)
+    if not selected_chain:
+        selected_chain = accepted_chains[0]
+    if selected_chain not in accepted_chains:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported chain: {selected_chain}. Allowed: {', '.join(accepted_chains)}",
+        )
 
     # Prevent duplicate active subscriptions
     existing = db.query(Subscription).filter(
@@ -532,7 +581,7 @@ async def subscribe_to_plan(
     if needs_payment:
         # Find merchant wallet
         merchant_wallet = None
-        chain = str((plan.accepted_chains or ["stellar"])[0]).lower()
+        chain = selected_chain
         wallet_rec = db.query(MerchantWallet).filter(
             and_(
                 MerchantWallet.merchant_id == plan.merchant_id,
@@ -709,6 +758,16 @@ async def subscription_authorize_page(
         sym = symbols.get(fiat_currency, f"{fiat_currency} ")
         amount_fiat = f"{sym}{Decimal(str(plan.amount)):.2f}"
 
+    # Resolve chain from metadata for display
+    meta = sub.subscription_metadata or {}
+    auth_chain = str(meta.get("chain") or (plan.accepted_chains or ["polygon"])[0] if plan else "polygon").lower()
+    chain_display_names = {
+        "stellar": "Stellar", "ethereum": "Ethereum", "polygon": "Polygon",
+        "base": "Base", "tron": "Tron", "solana": "Solana",
+        "avalanche": "Avalanche", "bsc": "BSC", "arbitrum": "Arbitrum",
+    }
+    auth_chain_display = chain_display_names.get(auth_chain, auth_chain.title())
+
     auth_url = f"{str(request.base_url).rstrip('/')}/subscribe/authorize/{subscription_id}?email={email}"
 
     page = f"""<!DOCTYPE html>
@@ -769,7 +828,7 @@ async def subscription_authorize_page(
     <div class=\"price-box\">
       <div class=\"price-title\">Price Summary</div>
       <div class=\"price-fiat\" id=\"fiatValue\">{amount_fiat}</div>
-      <div class=\"price-crypto\">≈ <span id=\"cryptoValue\">-- USDC</span> on <span id=\"chainValue\">Polygon</span></div>
+      <div class=\"price-crypto\">≈ <span id=\"cryptoValue\">-- USDC</span> on <span id=\"chainValue\">{auth_chain_display}</span></div>
     </div>
     <div class=\"status-pill\"><span class=\"dot\"></span><span id=\"statusText\">Waiting for wallet signature...</span></div>
     <div class=\"secured\">Secured by <b>Dari</b></div>
@@ -1014,10 +1073,11 @@ async def subscription_authorize_page(
       const ethersProvider = new ethers.BrowserProvider(provider);
       const tokenContract = new ethers.Contract(cfg.token_address, erc20Abi, ethersProvider);
       
-      // Determine the correct contract address to approve. 
-      // The backend creates subscriptions on SUBSCRIPTION_CONTRACT_POLYGON for chainId 80002.
-      // Based on the user's config: 0xf6dE451A98764a5f08389e72F83AC7594E4e3045
-      const contractAddress = "0xf6dE451A98764a5f08389e72F83AC7594E4e3045";
+      // Use chain-specific subscription contract from backend config.
+      const contractAddress = cfg.contract_address;
+      if (!contractAddress) {{
+          throw new Error(`Subscription contract is not configured for chain ${{cfg.chain}}`);
+      }}
       const requiredAmount = BigInt(cfg.amount_raw);
 
       const currentAllowance = await tokenContract.allowance(subscriber, contractAddress);
@@ -1123,28 +1183,100 @@ async def subscription_authorize_page(
           body: JSON.stringify({{ email: EMAIL, web3_subscription_id: authData.id }}),
       }});
 
-      setStatus('Authorized');
-      setMsg('Subscription authorized. Redirecting...');
+      // ── SUCCESS OVERLAY ──
       let targetUrl = cfg.manage_url;
       if (cfg.success_url) {{
           try {{
               const urlObj = new URL(cfg.success_url);
               urlObj.searchParams.set('subscription_id', SUB_ID);
-              urlObj.searchParams.set('status', 'PENDING_PAYMENT');
+              urlObj.searchParams.set('status', 'ACTIVE');
               targetUrl = urlObj.toString();
           }} catch(e) {{ targetUrl = cfg.success_url; }}
       }}
-      setTimeout(() => {{ window.location.href = targetUrl; }}, 700);
+      showOverlay('success', 'Subscription Authorized', 'Your subscription mandate has been signed successfully. You will be redirected shortly.', targetUrl);
     }} catch (e) {{
-      setStatus('Authorization failed');
       const msg = formatErr(e);
-      setMsg(msg);
-      if (msg.toLowerCase().includes('timed out')) {{
-          showWalletHelp();
+      const isRejected = isUserRejection(e);
+
+      if (isRejected) {{
+          // ── REJECTION: notify backend + show overlay ──
+          setStatus('Rejected');
+          try {{
+              const rejRes = await fetch(`/subscribe/authorize/${{SUB_ID}}/rejected`, {{
+                  method: 'POST',
+                  headers: {{ 'Content-Type': 'application/json' }},
+                  body: JSON.stringify({{ email: EMAIL, reason: msg }}),
+              }});
+              const rejData = await rejRes.json();
+              const redirectUrl = rejData.redirect_url || cfg.cancel_url || cfg.manage_url;
+              showOverlay('rejected', 'Authorization Rejected', 'You declined the wallet signature. No charges have been made. Redirecting...', redirectUrl);
+          }} catch (_re) {{
+              showOverlay('rejected', 'Authorization Rejected', 'You declined the wallet signature. No charges have been made.', cfg.cancel_url || cfg.manage_url);
+          }}
+      }} else {{
+          setStatus('Authorization failed');
+          setMsg(msg);
+          if (msg.toLowerCase().includes('timed out')) {{
+              showWalletHelp();
+          }}
       }}
     }} finally {{
       btn.disabled = false;
     }}
+  }}
+
+  function isUserRejection(err) {{
+      if (!err) return false;
+      const code = err.code || (err.info && err.info.error && err.info.error.code);
+      if (code === 4001 || code === 'ACTION_REJECTED') return true;
+      const m = (err.message || err.reason || '').toLowerCase();
+      return m.includes('rejected') || m.includes('denied') || m.includes('user rejected') || m.includes('user denied');
+  }}
+
+  function showOverlay(type, title, message, redirectUrl) {{
+      const existing = document.getElementById('resultOverlay');
+      if (existing) existing.remove();
+
+      const isSuccess = type === 'success';
+      const color = isSuccess ? '#059669' : '#dc2626';
+      const bgGrad = isSuccess
+          ? 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)'
+          : 'linear-gradient(135deg, #fef2f2 0%, #fecaca 100%)';
+      const icon = isSuccess
+          ? '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+          : '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+
+      const overlay = document.createElement('div');
+      overlay.id = 'resultOverlay';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:blur(6px);animation:fadeIn .3s ease';
+      overlay.innerHTML = `
+          <div style="background:#fff;border-radius:20px;padding:48px 40px;text-align:center;max-width:440px;width:90%;box-shadow:0 25px 80px rgba(0,0,0,.25);animation:scaleIn .35s ease">
+              <div style="width:88px;height:88px;border-radius:50%;background:${{bgGrad}};display:flex;align-items:center;justify-content:center;margin:0 auto 24px;animation:pulseIcon .6s ease">${{icon}}</div>
+              <h2 style="font-size:24px;font-weight:800;color:#0f172a;margin-bottom:8px;font-family:Inter,sans-serif">${{title}}</h2>
+              <p style="font-size:14px;color:#64748b;line-height:1.6;margin-bottom:24px;font-family:Inter,sans-serif">${{message}}</p>
+              <div style="width:100%;height:4px;background:#e2e8f0;border-radius:2px;overflow:hidden;margin-bottom:16px">
+                  <div id="progressBar" style="height:100%;background:${{color}};border-radius:2px;width:0%;transition:width 4s linear"></div>
+              </div>
+              <p style="font-size:12px;color:#94a3b8;font-family:Inter,sans-serif">Subscription ID: ${{SUB_ID}}</p>
+          </div>
+          <style>
+              @keyframes fadeIn {{ from {{ opacity:0 }} to {{ opacity:1 }} }}
+              @keyframes scaleIn {{ from {{ transform:scale(.85);opacity:0 }} to {{ transform:scale(1);opacity:1 }} }}
+              @keyframes pulseIcon {{ 0%,100% {{ transform:scale(1) }} 50% {{ transform:scale(1.08) }} }}
+          </style>
+      `;
+      document.body.appendChild(overlay);
+
+      // Animate progress bar
+      requestAnimationFrame(() => {{
+          const bar = document.getElementById('progressBar');
+          if (bar) bar.style.width = '100%';
+      }});
+
+      // Redirect after 4 seconds
+      if (redirectUrl) {{
+          setTimeout(() => {{ window.location.href = redirectUrl; }}, 4000);
+      }}
   }}
 
     setQrMode(qrMode);
@@ -1174,7 +1306,8 @@ async def subscription_authorize_config(
     if not plan:
         raise HTTPException(status_code=400, detail="Plan not found")
 
-    chain = str((plan.accepted_chains or ["polygon"])[0]).lower()
+    meta = sub.subscription_metadata or {}
+    chain = str(meta.get("chain") or (plan.accepted_chains or ["polygon"])[0]).lower()
     if chain not in EVM_SIGNATURE_CHAINS:
         raise HTTPException(status_code=400, detail=f"Chain {chain} does not support mandate signing")
     if not _has_subscription_contract(chain):
@@ -1213,7 +1346,6 @@ async def subscription_authorize_config(
     amount_raw = int(amount * Decimal(10 ** 6))
     max_payments = int(plan.max_billing_cycles) if plan.max_billing_cycles else None
 
-    meta = sub.subscription_metadata or {}
     success_url = meta.get("success_url")
     cancel_url = meta.get("cancel_url")
 
@@ -1227,6 +1359,7 @@ async def subscription_authorize_config(
         "customer_name": sub.customer_name,
         "chain": chain,
         "chain_id": chain_id,
+        "contract_address": getattr(settings, f"SUBSCRIPTION_CONTRACT_{chain.upper()}", ""),
         "token_symbol": token_symbol,
         "token_address": token_address,
         "amount": float(amount),
@@ -1268,11 +1401,102 @@ async def subscription_authorize_complete(
     sub.subscription_metadata = metadata
     db.commit()
 
+    # Fire authorization completed webhook
+    try:
+        event_service = EventService(db)
+        event_service.create_event(
+            event_type=EventTypes.SUBSCRIPTION_AUTHORIZATION_COMPLETED,
+            entity_type="subscription",
+            entity_id=sub.id,
+            payload={
+                "event": "subscription.authorization_completed",
+                "subscription_id": sub.id,
+                "plan_id": sub.plan_id,
+                "customer_email": sub.customer_email,
+                "status": sub.status,
+                "web3_subscription_id": web3_subscription_id,
+                "chain": metadata.get("chain"),
+                "token": metadata.get("token"),
+            },
+            merchant_id=str(sub.merchant_id),
+        )
+    except Exception:
+        pass
+
     return {
         "message": "Subscription authorized",
         "subscription_id": sub.id,
         "status": sub.status,
         "web3_subscription_id": web3_subscription_id,
+    }
+
+
+@router.post("/subscribe/authorize/{subscription_id}/rejected")
+async def subscription_authorize_rejected(
+    subscription_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Record that the customer rejected the wallet authorization."""
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    reason = body.get("reason", "User rejected wallet signature")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    sub = db.query(Subscription).filter(Subscription.id == subscription_id).first()
+    if not sub or sub.customer_email.lower() != email:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    # Update metadata with rejection info and CANCEL the subscription
+    # A rejected authorization means the subscription was never activated,
+    # so it must not remain in PENDING_PAYMENT (which would allow manage-page access).
+    metadata = sub.subscription_metadata or {}
+    metadata.update({
+        "authorization_rejected": True,
+        "authorization_rejected_at": datetime.utcnow().isoformat(),
+        "rejection_reason": reason,
+    })
+    sub.subscription_metadata = metadata
+    sub.status = SubscriptionStatus.CANCELLED.value
+    sub.cancelled_at = datetime.utcnow()
+    sub.cancel_at = datetime.utcnow()
+    sub.updated_at = datetime.utcnow()
+    db.commit()
+
+    # Fire authorization rejected webhook
+    try:
+        event_service = EventService(db)
+        event_service.create_event(
+            event_type=EventTypes.SUBSCRIPTION_AUTHORIZATION_REJECTED,
+            entity_type="subscription",
+            entity_id=sub.id,
+            payload={
+                "event": "subscription.authorization_rejected",
+                "subscription_id": sub.id,
+                "plan_id": sub.plan_id,
+                "customer_email": sub.customer_email,
+                "customer_name": sub.customer_name,
+                "status": _status_value(sub.status),
+                "chain": metadata.get("chain"),
+                "token": metadata.get("token"),
+                "reason": reason,
+            },
+            merchant_id=str(sub.merchant_id),
+        )
+    except Exception:
+        pass
+
+    base_url = str(request.base_url).rstrip("/")
+    cancel_url = metadata.get("cancel_url")
+    manage_url = _build_manage_url(base_url, sub.id, sub.customer_email)
+
+    return {
+        "message": "Authorization rejected",
+        "subscription_id": sub.id,
+        "status": _status_value(sub.status),
+        "redirect_url": cancel_url or manage_url,
     }
 
 
@@ -1289,6 +1513,48 @@ async def manage_subscription_page(
 
     status = _status_value(sub.status)
     base_url = str(request.base_url).rstrip("/")
+
+    # ── Guard: block manage page for never-authorized subscriptions ──
+    # A subscription should only be manageable if it was successfully
+    # authorized/paid at least once. If it is still PENDING_PAYMENT with
+    # no completed payments and no wallet authorization, show an error.
+    if status == SubscriptionStatus.PENDING_PAYMENT.value:
+        meta = sub.subscription_metadata or {}
+        was_authorized = meta.get("authorization_completed", False)
+        has_payments = (
+            db.query(SubscriptionPayment)
+            .filter(
+                SubscriptionPayment.subscription_id == sub.id,
+                SubscriptionPayment.status == PaymentStatus.CONFIRMED,
+            )
+            .first()
+        ) is not None
+        if not was_authorized and not has_payments:
+            return HTMLResponse(
+                content=_error_page(
+                    "Subscription Not Active",
+                    "This subscription has not been activated yet. "
+                    "Please complete the payment or wallet authorization first.",
+                ),
+                status_code=403,
+            )
+
+    # ── Guard: redirect cancelled subs to merchant cancel page (like normal payment flow) ──
+    if status == SubscriptionStatus.CANCELLED.value:
+        meta = sub.subscription_metadata or {}
+        cancel_url = meta.get("cancel_url")
+        if cancel_url:
+            return RedirectResponse(url=cancel_url, status_code=302)
+        # No cancel_url configured — redirect to the plan subscribe page so they can retry
+        if sub.plan_id:
+            return RedirectResponse(url=f"{base_url}/subscribe/{sub.plan_id}", status_code=302)
+        return HTMLResponse(
+            content=_error_page(
+                "Subscription Cancelled",
+                "This subscription has been cancelled. No charges were made.",
+            ),
+            status_code=410,
+        )
 
     page = f"""<!DOCTYPE html>
 <html lang=\"en\">
@@ -1555,6 +1821,29 @@ async def manage_subscription_pay_now(
     if not sub or sub.customer_email.lower() != email:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
+    # Guard: prevent pay-now on never-authorized subscriptions
+    current_status = _status_value(sub.status)
+    if current_status == SubscriptionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="Cannot process payment for a cancelled subscription")
+    if current_status == SubscriptionStatus.PENDING_PAYMENT.value:
+        meta = sub.subscription_metadata or {}
+        was_authorized = meta.get("authorization_completed", False)
+        has_payments = (
+            db.query(SubscriptionPayment)
+            .filter(
+                SubscriptionPayment.subscription_id == sub.id,
+                SubscriptionPayment.status == PaymentStatus.COMPLETED,
+            )
+            .first()
+        ) is not None
+        if not was_authorized and not has_payments:
+            # Subscription was never activated — redirect to authorize flow instead
+            base_url = str(request.base_url).rstrip("/")
+            raise HTTPException(
+                status_code=400,
+                detail="Subscription not yet authorized. Please complete wallet authorization first.",
+            )
+
     # Reuse latest pending payment session if available
     pending = (
         db.query(SubscriptionPayment)
@@ -1722,7 +2011,13 @@ async def manage_subscription_cancel(
     sub.cancel_at = datetime.utcnow()
     sub.updated_at = datetime.utcnow()
     db.commit()
-    return {"message": "Subscription cancelled"}
+
+    # Return merchant's cancel_url so the frontend redirects like normal payment flow
+    meta = sub.subscription_metadata or {}
+    cancel_url = meta.get("cancel_url")
+    base_url = str(request.base_url).rstrip("/")
+    redirect_url = cancel_url or (f"{base_url}/subscribe/{sub.plan_id}" if sub.plan_id else None)
+    return {"message": "Subscription cancelled", "redirect_url": redirect_url}
 
 
 # ─────────────────────────────────────────────
